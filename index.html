@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>魔方键盘 · Cube Keyboard</title>
+  </head>
+  <body>
+    <div id="app">
+      <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-expanded="true" aria-controls="sidebar" title="收起侧栏">⟨</button>
+      <aside id="sidebar">
+        <header>
+          <div class="sidebar-header-row">
+            <div>
+              <h1>魔方键盘</h1>
+              <p class="subtitle">Cube Keyboard 原型 · M3 方向模拟与完整规则引擎</p>
+            </div>
+          </div>
+        </header>
+
+        <section class="panel">
+          <h2>运行自检</h2>
+          <div class="hint" id="webgl-status">检测中…</div>
+        </section>
+
+        <section class="panel">
+          <h2>输入模式</h2>
+          <div class="mode-toggle">
+            <button id="mode-sequences" type="button" class="mode-btn active">扭转序列</button>
+            <button id="mode-sticker" type="button" class="mode-btn">九宫格</button>
+          </div>
+          <div class="hint" id="mode-hint">当前：通过扭转序列输出字符</div>
+        </section>
+
+        <section class="panel">
+          <h2>虚拟输入法</h2>
+          <div class="ime-toolbar">
+            <button id="ime-mode" type="button">中文模式</button>
+            <button id="ime-clear" type="button">清空</button>
+          </div>
+          <textarea id="ime-output" rows="3" placeholder="魔方的字符输出会显示在这里"></textarea>
+          <div id="ime-candidates" class="candidates"></div>
+        </section>
+
+        <section class="panel">
+          <h2>参考系</h2>
+          <div class="mode-toggle reference-toggle">
+            <button id="ref-manual" type="button" class="mode-btn active">手动</button>
+            <button id="ref-simulate" type="button" class="mode-btn">方向模拟</button>
+          </div>
+          <div class="row">
+            <label for="front-color">正面颜色</label>
+            <select id="front-color"></select>
+          </div>
+          <div class="row">
+            <label for="up-color">顶面颜色</label>
+            <select id="up-color"></select>
+          </div>
+          <div class="hint" id="reference-hint"></div>
+          <div class="hint" id="reference-detail"></div>
+          <button id="reset-view" type="button" class="small-button">重置视角基准</button>
+        </section>
+
+        <section class="panel">
+          <h2>键盘映射</h2>
+          <div class="keys" id="keys-panel"></div>
+          <div class="hint">E/A/S/D/F/C = 顶/左/正/右/背/底；J/K/L = 竖/横/前后中层；Shift = 逆时针</div>
+        </section>
+
+        <section class="panel" id="panel-rules">
+          <h2>扭转规则</h2>
+          <div id="rules-list" class="rules-list"></div>
+          <div class="rule-form">
+            <input id="rule-sequence" placeholder="序列，如 R B 或 R B'" />
+            <input id="rule-output" placeholder="输出字符，如 a" />
+            <button id="rule-add" type="button">添加规则</button>
+          </div>
+          <div class="hint">空格分隔多个扭转；' 为逆时针，2 为 180°。输入后只要匹配到规则，就立即输出，无需手动提交。</div>
+        </section>
+
+        <section class="panel" id="panel-sticker" hidden>
+          <h2>九宫格模式</h2>
+          <div class="row">
+            <label for="sticker-face">面</label>
+            <select id="sticker-face">
+              <option value="F">正面</option>
+              <option value="B">背面</option>
+              <option value="U">顶面</option>
+              <option value="D">底面</option>
+              <option value="L">左面</option>
+              <option value="R">右面</option>
+            </select>
+          </div>
+          <div class="sticker-preset">
+            <select id="sticker-preset">
+              <option value="qwe">QWERTY 布局</option>
+              <option value="abc">字母顺序</option>
+              <option value="num">数字 1-9</option>
+            </select>
+            <button id="sticker-apply-preset" type="button">一键预设</button>
+            <button id="sticker-clear-face" type="button">清空该面</button>
+          </div>
+          <div id="sticker-grid" class="sticker-grid"></div>
+          <div class="sticker-edit">
+            <input id="sticker-output" placeholder="点击格子后设置字符" />
+            <button id="sticker-save" type="button">保存到该格</button>
+            <button id="sticker-clear" type="button">清空该格</button>
+          </div>
+          <div class="hint">点击 3×3 格子即“按下”贴纸输出；只保存字符，输入法负责解释。</div>
+        </section>
+
+        <section class="panel">
+          <h2>操作记录</h2>
+          <div id="move-log" class="log"></div>
+        </section>
+
+        <section class="panel">
+          <h2>动作</h2>
+          <div class="actions">
+            <button id="reset-cube" type="button">重置魔方</button>
+            <button id="reset-config" type="button">重置所有配置</button>
+            <button id="export-config" type="button">导出配置</button>
+            <button id="toggle-axes" type="button">隐藏参考线</button>
+            <label class="button-like" for="import-config">导入配置</label>
+            <input id="import-config" type="file" accept=".json,application/json" hidden />
+          </div>
+          <div class="speed-control">
+            <label for="turn-duration">扭转速度</label>
+            <input id="turn-duration" type="range" min="40" max="800" step="20" value="180" />
+            <span id="turn-duration-label">180ms</span>
+          </div>
+        </section>
+      </aside>
+
+      <main id="stage">
+        <div id="cube-container"></div>
+        <div id="overlay-hint">左键/单指旋转，右键/双指平移，滚轮/捏合缩放；键盘 E/A/S/D/F/C 与 J/K/L 扭转魔方</div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
