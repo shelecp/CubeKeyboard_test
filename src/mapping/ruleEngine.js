@@ -7,16 +7,8 @@ function normalizeOutput(output) {
   return '';
 }
 
-function normalizeStickerCells(cells = {}) {
-  const normalized = {};
-  for (const [key, output] of Object.entries(cells)) {
-    const text = normalizeOutput(output);
-    if (text) normalized[key] = text;
-  }
-  return normalized;
-}
-
-// 规则引擎：把“扭转 / 组合”或“贴纸按下”转换为字符输出。
+// 规则引擎：把“扭转组合”转换为字符输出。
+// （旧版"九宫格贴纸坐标映射"已由格子唯一编号体系取代，见 api.js 的格子文字接口。）
 //
 // 扭转序列采用“缓冲 + 最长后缀匹配”：
 // - 每次扭转先进入缓冲；
@@ -25,7 +17,6 @@ function normalizeStickerCells(cells = {}) {
 export class RuleEngine {
   constructor() {
     this.rules = [];
-    this.stickerMaps = [];
     this.buffer = [];
     this.events = new EventEmitter();
   }
@@ -33,9 +24,6 @@ export class RuleEngine {
   load(config = {}) {
     this.rules = Array.isArray(config.rules)
       ? config.rules.map((rule) => ({ ...rule, output: normalizeOutput(rule.output) }))
-      : [];
-    this.stickerMaps = Array.isArray(config.stickerMaps)
-      ? config.stickerMaps.map((map) => ({ ...map, cells: normalizeStickerCells(map.cells) }))
       : [];
     this.clearTurns();
   }
@@ -63,26 +51,6 @@ export class RuleEngine {
       ...rule,
       when: Array.isArray(rule.when) ? rule.when : [rule.when],
     }));
-  }
-
-  registerStickerMap(map) {
-    if (!map?.id) throw new Error('贴纸映射必须包含 id');
-    const stored = {
-      ...map,
-      face: normalizeFace(map.face),
-      cells: normalizeStickerCells(map.cells),
-    };
-    this.removeStickerMap(map.id);
-    this.stickerMaps.push(stored);
-    return stored;
-  }
-
-  removeStickerMap(id) {
-    this.stickerMaps = this.stickerMaps.filter((map) => map.id !== id);
-  }
-
-  listStickerMaps() {
-    return [...this.stickerMaps];
   }
 
   // 记录一次扭转，并立即检查当前缓冲是否能命中规则。
@@ -147,42 +115,6 @@ export class RuleEngine {
     }
 
     return results;
-  }
-
-  // 按下某个面的九宫格贴纸，返回该格映射的输出；未映射返回 null。
-  triggerSticker(face, cell) {
-    const normalizedFace = normalizeFace(face);
-    const row = Number(cell?.row);
-    const col = Number(cell?.col);
-    if (!Number.isInteger(row) || !Number.isInteger(col)) return null;
-
-    const map = this.stickerMaps.find((item) => item.face === normalizedFace);
-    const output = map?.cells?.[`${row},${col}`];
-    return output ? { map, output } : null;
-  }
-
-  // 新增或更新某个面的九宫格单元格映射；output 为空则删除该格。
-  setStickerCell(face, row, col, output) {
-    const normalizedFace = normalizeFace(face);
-    const r = Number(row);
-    const c = Number(col);
-    if (!Number.isInteger(r) || !Number.isInteger(c)) throw new Error('贴纸格坐标必须是整数');
-
-    let map = this.stickerMaps.find((item) => item.face === normalizedFace);
-    if (!map) {
-      map = { id: `face-${normalizedFace}`, face: normalizedFace, cells: {} };
-      this.stickerMaps.push(map);
-    }
-
-    map.cells = map.cells || {};
-    const key = `${r},${c}`;
-    const text = normalizeOutput(output);
-    if (text) {
-      map.cells[key] = text;
-    } else {
-      delete map.cells[key];
-    }
-    return map;
   }
 
   // 工具：把归一化后的序列转为可读字符串

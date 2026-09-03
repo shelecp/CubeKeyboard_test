@@ -1,39 +1,9 @@
 import { DEFAULT_CONFIG } from './defaultConfig.js';
 
-const STORAGE_KEY = 'cube-keyboard-config-v2';
-
-// 把旧版本配置迁移到当前键位约定：旧 x 转为 c，旧 w 转为 e，并把上一版 r/v 迁移到 e/c。
-function migrateConfig(config) {
-  const migrated = { ...config };
-  delete migrated.shiftInverse;
-  const keymap = { ...config.keymap };
-
-  if (keymap.x) {
-    keymap.v = keymap.v || keymap.x;
-    delete keymap.x;
-  }
-
-  if (keymap.w) {
-    keymap.r = keymap.r || keymap.w;
-    delete keymap.w;
-  }
-
-  if (keymap.r) {
-    keymap.e = keymap.e || keymap.r;
-    delete keymap.r;
-  }
-
-  if (keymap.v) {
-    keymap.c = keymap.c || keymap.v;
-    delete keymap.v;
-  }
-
-  for (const [key, value] of Object.entries(DEFAULT_CONFIG.keymap)) {
-    if (!keymap[key]) keymap[key] = { ...value };
-  }
-
-  return { ...migrated, keymap };
-}
+// v3：不再做任何旧配置迁移。历史上 v2 的"键位迁移链"（r/v→e/c 静默改写）
+// 曾导致用户键位漂移，已彻底移除。旧版本 localStorage 配置直接作废，
+// 键位等默认值永远以 defaultConfig.js 为唯一权威来源。
+const STORAGE_KEY = 'cube-keyboard-config-v3';
 
 // 从浏览器本地存储读取配置，读不到就返回默认配置的副本
 export function loadConfig() {
@@ -41,7 +11,7 @@ export function loadConfig() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return structuredClone(DEFAULT_CONFIG);
     const parsed = JSON.parse(raw);
-    return migrateConfig({ ...structuredClone(DEFAULT_CONFIG), ...parsed });
+    return { ...structuredClone(DEFAULT_CONFIG), ...parsed };
   } catch (error) {
     console.warn('[CubeKeyboard] 读取本地配置失败，使用默认配置：', error);
     return structuredClone(DEFAULT_CONFIG);
@@ -64,8 +34,8 @@ export function downloadConfig(config) {
   URL.revokeObjectURL(url);
 }
 
-// 解析 JSON 字符串或对象，并与默认配置合并
+// 解析 JSON 字符串或对象，并与默认配置合并（不做任何迁移改写）
 export function parseConfig(input) {
   const obj = typeof input === 'string' ? JSON.parse(input) : input;
-  return migrateConfig({ ...structuredClone(DEFAULT_CONFIG), ...obj });
+  return { ...structuredClone(DEFAULT_CONFIG), ...obj };
 }

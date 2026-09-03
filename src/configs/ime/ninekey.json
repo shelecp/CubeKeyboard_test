@@ -1,0 +1,83 @@
+{
+  "id": "ninekey",
+  "name": "九键拼音",
+  "engine": "ninekey",
+  "enabled": true,
+  "lockOutput": true,
+  "description": "扭一层输出一个按键的字母组（如 abc），组字母累积成数字串后按九键拼音出候选。",
+  "defaultRules": [
+    {
+      "id": "ninekey-abc",
+      "type": "turn-sequence",
+      "when": [
+        "F"
+      ],
+      "output": "abc"
+    },
+    {
+      "id": "ninekey-def",
+      "type": "turn-sequence",
+      "when": [
+        "B"
+      ],
+      "output": "def"
+    },
+    {
+      "id": "ninekey-ghi",
+      "type": "turn-sequence",
+      "when": [
+        "U"
+      ],
+      "output": "ghi"
+    },
+    {
+      "id": "ninekey-jkl",
+      "type": "turn-sequence",
+      "when": [
+        "D"
+      ],
+      "output": "jkl"
+    },
+    {
+      "id": "ninekey-mno",
+      "type": "turn-sequence",
+      "when": [
+        "L"
+      ],
+      "output": "mno"
+    },
+    {
+      "id": "ninekey-pqrs",
+      "type": "turn-sequence",
+      "when": [
+        "R"
+      ],
+      "output": "pqrs"
+    },
+    {
+      "id": "ninekey-tuv",
+      "type": "turn-sequence",
+      "when": [
+        "M"
+      ],
+      "output": "tuv"
+    },
+    {
+      "id": "ninekey-wxyz",
+      "type": "turn-sequence",
+      "when": [
+        "E"
+      ],
+      "output": "wxyz"
+    },
+    {
+      "id": "ninekey-标点",
+      "type": "turn-sequence",
+      "when": [
+        "S"
+      ],
+      "output": "标点"
+    }
+  ],
+  "config": {}
+}

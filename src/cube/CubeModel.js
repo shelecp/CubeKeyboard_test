@@ -48,6 +48,19 @@ export const FACE_NAMES_ZH = {
   S: '前后中层',
 };
 
+// 贴纸唯一编号体系：
+// 复原态下按“从外侧正视该面”的阅读顺序给 54 个贴纸编号（F1..F9、U1..U9 ...）。
+// 编号绑定在小块上，随层旋转永不改变 —— 编辑模式、模拟触摸、九宫格都以编号定位。
+// down/right：从外侧正视该面时“行号增大方向”与“列号增大方向”。
+export const STICKER_FACE_META = {
+  F: { normal: [0, 0, 1], down: [0, -1, 0], right: [1, 0, 0] },
+  B: { normal: [0, 0, -1], down: [0, -1, 0], right: [-1, 0, 0] },
+  U: { normal: [0, 1, 0], down: [0, 0, 1], right: [1, 0, 0] },
+  D: { normal: [0, -1, 0], down: [0, 0, -1], right: [1, 0, 0] },
+  R: { normal: [1, 0, 0], down: [0, -1, 0], right: [0, 0, -1] },
+  L: { normal: [-1, 0, 0], down: [0, -1, 0], right: [0, 0, 1] },
+};
+
 // 魔方逻辑状态：维护每个小方块的位置与朝向。
 // 世界坐标约定：+X 右、+Y 上、+Z 前（即正面朝向 +Z）。
 export class CubeModel {
@@ -77,6 +90,7 @@ export class CubeModel {
 
     this.cubies = [];
     this.byKey = new Map();
+    this.cellOwner = new Map();
 
     for (let x = -1; x <= 1; x += 1) {
       for (let y = -1; y <= 1; y += 1) {
@@ -99,11 +113,70 @@ export class CubeModel {
             ],
           };
 
+          this.assignStickerIds(cubie);
           this.cubies.push(cubie);
           this.byKey.set(this.keyOf(cubie.pos), cubie);
         }
       }
     }
+  }
+
+  // 复原态下为每个可见贴纸分配唯一编号，编号跟随小块存在。
+  assignStickerIds(cubie) {
+    const normalToIndex = (n) => {
+      if (n[0] === 1) return 0;
+      if (n[0] === -1) return 1;
+      if (n[1] === 1) return 2;
+      if (n[1] === -1) return 3;
+      if (n[2] === 1) return 4;
+      return 5;
+    };
+
+    cubie.cellIds = {};
+    for (const [faceName, meta] of Object.entries(STICKER_FACE_META)) {
+      const normal = new THREE.Vector3(...meta.normal);
+      // 只有位于该外表面层上的贴纸才可见（小块沿法线方向的分量必须等于 1）
+      if (cubie.pos.dot(normal) !== 1) continue;
+
+      const down = new THREE.Vector3(...meta.down);
+      const right = new THREE.Vector3(...meta.right);
+      const row = Math.round(cubie.pos.dot(down)) + 1;
+      const col = Math.round(cubie.pos.dot(right)) + 1;
+
+      const cellId = `${faceName}${row * 3 + col + 1}`;
+      cubie.cellIds[normalToIndex(meta.normal)] = cellId;
+      this.cellOwner.set(cellId, cubie);
+    }
+  }
+
+  // 读取某世界坐标位置上、朝向某个世界面的贴纸编号。
+  // worldFace：'front' | 'back' | 'up' | 'down' | 'right' | 'left'
+  stickerAt(position, worldFace) {
+    const worldNormals = {
+      front: [0, 0, 1],
+      back: [0, 0, -1],
+      up: [0, 1, 0],
+      down: [0, -1, 0],
+      right: [1, 0, 0],
+      left: [-1, 0, 0],
+    };
+    const worldNormal = new THREE.Vector3(...(worldNormals[worldFace] || [0, 0, 1]));
+    const cubie = this.byKey.get(`${position.x},${position.y},${position.z}`);
+    if (!cubie) return null;
+
+    // 世界法线逆变换回局部，找到对应材质槽位
+    const localNormal = worldNormal.clone().applyQuaternion(cubie.orient.clone().invert());
+    let bestIndex = 0;
+    let bestDot = -Infinity;
+    for (let index = 0; index < 6; index += 1) {
+      const direction = LOCAL_NORMALS[index];
+      const dot = direction.dot(localNormal);
+      if (dot > bestDot) {
+        bestDot = dot;
+        bestIndex = index;
+      }
+    }
+    return { cubie, materialIndex: bestIndex, cellId: cubie.cellIds?.[bestIndex] ?? null };
   }
 
   keyOf(vector) {

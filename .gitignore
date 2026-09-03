@@ -3,3 +3,10 @@ dist/
 .venv/
 __pycache__/
 .DS_Store
+
+# Playwright
+test-results/
+playwright-report/
+
+# ZCode 本地配置
+.zcode/

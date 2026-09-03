@@ -1,0 +1,271 @@
+{
+  "id": "wubi",
+  "name": "五笔（预留）",
+  "engine": "wubi",
+  "enabled": true,
+  "description": "扭转规则表已生效；五笔字根-字词库与候选引擎为预留接口，后续接入。",
+  "defaultRules": [
+    {
+      "id": "ime-letter-a",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "L"
+      ],
+      "output": "a"
+    },
+    {
+      "id": "ime-letter-b",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "L'"
+      ],
+      "output": "b"
+    },
+    {
+      "id": "ime-letter-c",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "M"
+      ],
+      "output": "c"
+    },
+    {
+      "id": "ime-letter-d",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "M'"
+      ],
+      "output": "d"
+    },
+    {
+      "id": "ime-letter-e",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "R"
+      ],
+      "output": "e"
+    },
+    {
+      "id": "ime-letter-f",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "R'"
+      ],
+      "output": "f"
+    },
+    {
+      "id": "ime-letter-g",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "F"
+      ],
+      "output": "g"
+    },
+    {
+      "id": "ime-letter-h",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "F'"
+      ],
+      "output": "h"
+    },
+    {
+      "id": "ime-letter-i",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "B"
+      ],
+      "output": "i"
+    },
+    {
+      "id": "ime-letter-j",
+      "type": "turn-sequence",
+      "when": [
+        "U",
+        "B'"
+      ],
+      "output": "j"
+    },
+    {
+      "id": "ime-letter-k",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "L"
+      ],
+      "output": "k"
+    },
+    {
+      "id": "ime-letter-l",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "L'"
+      ],
+      "output": "l"
+    },
+    {
+      "id": "ime-letter-m",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "M"
+      ],
+      "output": "m"
+    },
+    {
+      "id": "ime-letter-n",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "M'"
+      ],
+      "output": "n"
+    },
+    {
+      "id": "ime-letter-o",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "R"
+      ],
+      "output": "o"
+    },
+    {
+      "id": "ime-letter-p",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "R'"
+      ],
+      "output": "p"
+    },
+    {
+      "id": "ime-letter-q",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "F"
+      ],
+      "output": "q"
+    },
+    {
+      "id": "ime-letter-r",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "F'"
+      ],
+      "output": "r"
+    },
+    {
+      "id": "ime-letter-s",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "B"
+      ],
+      "output": "s"
+    },
+    {
+      "id": "ime-letter-t",
+      "type": "turn-sequence",
+      "when": [
+        "E",
+        "B'"
+      ],
+      "output": "t"
+    },
+    {
+      "id": "ime-letter-u",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "L"
+      ],
+      "output": "u"
+    },
+    {
+      "id": "ime-letter-v",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "L'"
+      ],
+      "output": "v"
+    },
+    {
+      "id": "ime-letter-w",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "M"
+      ],
+      "output": "w"
+    },
+    {
+      "id": "ime-letter-x",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "M'"
+      ],
+      "output": "x"
+    },
+    {
+      "id": "ime-letter-y",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "R"
+      ],
+      "output": "y"
+    },
+    {
+      "id": "ime-letter-z",
+      "type": "turn-sequence",
+      "when": [
+        "D",
+        "R'"
+      ],
+      "output": "z"
+    },
+    {
+      "id": "ime-space",
+      "type": "turn-sequence",
+      "when": [
+        "S"
+      ],
+      "output": "␣"
+    },
+    {
+      "id": "ime-backspace",
+      "type": "turn-sequence",
+      "when": [
+        "S'"
+      ],
+      "output": "⌫"
+    },
+    {
+      "id": "ime-commit",
+      "type": "turn-sequence",
+      "when": [
+        "S2"
+      ],
+      "output": "⇥"
+    }
+  ],
+  "config": {
+    "version": "86",
+    "dict": null
+  }
+}

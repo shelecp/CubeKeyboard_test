@@ -1,19 +1,18 @@
-import { COLOR_NAMES, HEX_COLORS } from '../cube/colors.js';
+import { COLOR_NAMES, HEX_COLORS, deriveFaceColors } from '../cube/colors.js';
 import { FACE_NAMES_ZH } from '../cube/CubeModel.js';
-import { downloadConfig } from '../mapping/config.js';
 import { moveToString } from '../mapping/notation.js';
-import { ImePanel } from '../ime/ImePanel.js';
+import { ImeBar } from '../ime/ImeBar.js';
+import { createImeEngine } from '../ime/engines.js';
+import { IME_PROFILES, getProfile } from '../ime/profiles.js';
+import t9Dict from '../ime/t9-dict.json';
 
-const FACE_OPTIONS = [
-  { value: 'F', label: '正面' },
-  { value: 'B', label: '背面' },
-  { value: 'U', label: '顶面' },
-  { value: 'D', label: '底面' },
-  { value: 'L', label: '左面' },
-  { value: 'R', label: '右面' },
-];
+// 九宫格实验模块的懒加载注册表：glob 方式保证"删除 src/t9/ 目录"后
+// 构建 / 运行都不报错（注册表为空时九宫格按钮自动隐藏），其余功能零影响。
+const T9_MODULE_LOADERS = import.meta.glob('../t9/T9Module.js');
+const T9_MODULE_PATH = '../t9/T9Module.js';
 
-// 组装界面交互：参考系、键盘映射、扭转规则、九宫格贴纸映射、虚拟输入法。
+// 组装界面交互：输入法切换、扭转规则（含录制/重置/导入导出）、格子编辑模式、
+// 九宫格模式开关、参考系、键盘映射。
 export function setupUI(cubeKeyboard) {
   const frontSelect = document.getElementById('front-color');
   const upSelect = document.getElementById('up-color');
@@ -22,62 +21,92 @@ export function setupUI(cubeKeyboard) {
   const refSimulateButton = document.getElementById('ref-simulate');
   const keysPanel = document.getElementById('keys-panel');
   const moveLog = document.getElementById('move-log');
-  const resetButton = document.getElementById('reset-cube');
-  const resetConfigButton = document.getElementById('reset-config');
-  const exportButton = document.getElementById('export-config');
+  const resetCubeButton = document.getElementById('reset-cube');
   const axesButton = document.getElementById('toggle-axes');
   const referenceDetail = document.getElementById('reference-detail');
   const resetViewButton = document.getElementById('reset-view');
-  const importInput = document.getElementById('import-config');
   const turnDurationInput = document.getElementById('turn-duration');
   const turnDurationLabel = document.getElementById('turn-duration-label');
   const sidebarToggleButton = document.getElementById('sidebar-toggle');
 
-  // 输入模式切换
-  const modeSequencesButton = document.getElementById('mode-sequences');
-  const modeStickerButton = document.getElementById('mode-sticker');
-  const modeHint = document.getElementById('mode-hint');
-  const panelRules = document.getElementById('panel-rules');
-  const panelSticker = document.getElementById('panel-sticker');
+  // 九宫格模式按钮 + 浮动保存按钮
+  const t9Button = document.getElementById('t9-mode');
+  const cellsSaveFloat = document.getElementById('cells-save-float');
 
-  // 虚拟输入法相关元素
-  const imeModeButton = document.getElementById('ime-mode');
-  const imeClearButton = document.getElementById('ime-clear');
-  const imeOutput = document.getElementById('ime-output');
-  const imeCandidates = document.getElementById('ime-candidates');
+  // 输入法
+  const imeSelect = document.getElementById('ime-select');
+  const imeDesc = document.getElementById('ime-desc');
 
-  // 扭转规则相关元素
+  // 扭转规则
   const rulesList = document.getElementById('rules-list');
   const ruleSequenceInput = document.getElementById('rule-sequence');
   const ruleOutputInput = document.getElementById('rule-output');
+  const ruleRecordButton = document.getElementById('rule-record');
   const ruleAddButton = document.getElementById('rule-add');
+  const ruleHint = document.getElementById('rule-hint');
 
-  // 九宫格贴纸映射相关元素
-  const stickerFaceSelect = document.getElementById('sticker-face');
-  const stickerGrid = document.getElementById('sticker-grid');
-  const stickerPresetSelect = document.getElementById('sticker-preset');
-  const stickerApplyPresetButton = document.getElementById('sticker-apply-preset');
-  const stickerClearFaceButton = document.getElementById('sticker-clear-face');
-  const stickerOutputInput = document.getElementById('sticker-output');
-  const stickerSaveButton = document.getElementById('sticker-save');
-  const stickerClearButton = document.getElementById('sticker-clear');
+  // 动作（规则重置 / 导入导出）
+  const resetCurrentRulesButton = document.getElementById('reset-current-ime-rules');
+  const resetAllRulesButton = document.getElementById('reset-all-ime-rules');
+  const exportRulesButton = document.getElementById('export-ime-rules');
+  const importRulesInput = document.getElementById('import-ime-rules');
 
-  let selectedStickerCell = null;
-  let inputMode = 'sequences';
+  // 格子与文字
+  const editModeButton = document.getElementById('edit-mode');
+  const cellsHint = document.getElementById('cells-hint');
+  const cellsUnsaved = document.getElementById('cells-unsaved');
+
+  // 弹窗层（格子编辑浮窗）
+  const popupLayer = document.getElementById('popup-layer');
+
+  const imeBar = new ImeBar();
+
+  // ---------- 运行时状态 ----------
+  let imeEngine = null;        // 当前输入法引擎
+  let currentProfile = getProfile(cubeKeyboard.config.activeIme || 'pinyin26');
+  let t9Module = null;         // 九宫格实验模块（独立于输入法）
+  let t9Active = false;
+  let editMode = false;
+  let ruleRecorder = null;     // { tokens: [] } | null
+  let editingRuleId = null;    // 正在编辑的规则 id（null = 新增）
+  let editingRuleOutput = null;// 锁定输出时保留的原输出
   let axesVisible = true;
+  let popupZTop = 500;
+  let sidebarCollapsedBeforeT9 = false;
+  const openEditors = new Map(); // cellId -> { root, input }
 
-  const ime = new ImePanel({
-    outputEl: imeOutput,
-    modeButtonEl: imeModeButton,
-    candidateEl: imeCandidates,
-  });
+  // 规则引擎当前是否应当暂停（九宫格 / 录制 / 编辑模式都只旋转不吐字）
+  function syncEngineSuspension() {
+    cubeKeyboard.setEngineSuspended(Boolean(t9Active || ruleRecorder || editMode));
+  }
 
-  cubeKeyboard.on('output', (output) => ime.receive(output));
+  // ---------- 页面提示 toast ----------
+  let toastEl = null;
+  let toastTimer = null;
+  function showToast(message, kind = '') {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.id = 'toast';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = message;
+    toastEl.className = `show ${kind}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = kind; }, 2600);
+  }
 
-  // 填充参考系颜色下拉框
-  for (const color of COLOR_NAMES) {
-    frontSelect.add(new Option(color, color));
-    upSelect.add(new Option(color, color));
+  function logMove(line) {
+    const div = document.createElement('div');
+    div.className = 'log-line';
+    div.textContent = line;
+    moveLog.prepend(div);
+    while (moveLog.children.length > 40) moveLog.removeChild(moveLog.lastChild);
+  }
+
+  // ---------- 参考系 ----------
+  function colorCss(name) {
+    const hex = HEX_COLORS[name];
+    return hex == null ? '#888888' : `#${hex.toString(16).padStart(6, '0')}`;
   }
 
   function refreshReference() {
@@ -109,11 +138,6 @@ export function setupUI(cubeKeyboard) {
     referenceDetail.textContent = `${prefix}正面=${faceName(info.frontFace)}，顶面=${faceName(info.upFace)}${confidenceText}${ambiguityText}`;
   }
 
-  function colorCss(name) {
-    const hex = HEX_COLORS[name];
-    return hex == null ? '#888888' : `#${hex.toString(16).padStart(6, '0')}`;
-  }
-
   function setReferenceMode(mode) {
     const actual = cubeKeyboard.setPoseDetectorMode(mode);
     refManualButton.classList.toggle('active', actual === 'manual');
@@ -124,6 +148,7 @@ export function setupUI(cubeKeyboard) {
     refreshReference();
   }
 
+  // ---------- 侧栏开合（把手与侧栏同属一体导轨） ----------
   function setSidebarCollapsed(collapsed) {
     document.body.classList.toggle('sidebar-collapsed', collapsed);
     sidebarToggleButton.setAttribute('aria-expanded', String(!collapsed));
@@ -131,8 +156,19 @@ export function setupUI(cubeKeyboard) {
     sidebarToggleButton.setAttribute('aria-label', collapsed ? '展开侧栏' : '收起侧栏');
   }
 
+  // ---------- 键位映射展示 ----------
   function renderKeymap() {
     keysPanel.innerHTML = '';
+    const derived = deriveFaceColors(cubeKeyboard.pose.getReference());
+    const faceColorName = {
+      F: derived.front,
+      B: derived.back,
+      U: derived.up,
+      D: derived.down,
+      R: derived.right,
+      L: derived.left,
+    };
+
     for (const [key, value] of Object.entries(cubeKeyboard.config.keymap || {})) {
       const item = document.createElement('div');
       item.className = 'key-item';
@@ -141,23 +177,22 @@ export function setupUI(cubeKeyboard) {
       keycap.className = 'keycap';
       keycap.textContent = key.toUpperCase();
 
-      const label = document.createElement('span');
       const resolved = cubeKeyboard.resolveRelativeTurn?.(value.face, 1) || { face: value.face };
+      const dot = document.createElement('span');
+      dot.className = 'face-dot';
+      const colorName = faceColorName[resolved.face];
+      if (colorName) dot.style.background = colorCss(colorName);
+      dot.title = colorName ?? '';
+
+      const label = document.createElement('span');
       label.textContent = `${FACE_NAMES_ZH[value.face] || value.face} → ${FACE_NAMES_ZH[resolved.face] || resolved.face}`;
 
-      item.append(keycap, label);
+      item.append(keycap, dot, label);
       keysPanel.appendChild(item);
     }
   }
 
-  function logMove(line) {
-    const div = document.createElement('div');
-    div.className = 'log-line';
-    div.textContent = line;
-    moveLog.prepend(div);
-    while (moveLog.children.length > 40) moveLog.removeChild(moveLog.lastChild);
-  }
-
+  // ---------- 扭转规则（含录制） ----------
   function formatSequence(when) {
     const list = Array.isArray(when) ? when : [when];
     return list
@@ -172,6 +207,7 @@ export function setupUI(cubeKeyboard) {
 
   function renderRules() {
     rulesList.innerHTML = '';
+    const locked = Boolean(currentProfile.lockOutput);
     const rules = cubeKeyboard.listRules();
     if (rules.length === 0) {
       const empty = document.createElement('div');
@@ -189,166 +225,366 @@ export function setupUI(cubeKeyboard) {
       info.className = 'rule-info';
       info.innerHTML = `<span class="rule-seq">${formatSequence(rule.when)}</span><span>→</span><span class="rule-out">${formatOutput(rule.output)}</span>`;
 
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'small-button';
-      remove.textContent = '删除';
-      remove.addEventListener('click', () => {
-        cubeKeyboard.removeRule(rule.id);
-        renderRules();
-        logMove(`已删除规则 ${rule.id}`);
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'small-button';
+      edit.textContent = '编辑';
+      edit.addEventListener('click', () => {
+        editingRuleId = rule.id;
+        editingRuleOutput = formatOutput(rule.output);
+        ruleSequenceInput.value = formatSequence(rule.when);
+        ruleOutputInput.value = editingRuleOutput;
+        ruleAddButton.textContent = '更新规则';
+        logMove(`正在编辑规则 ${rule.id}，可重新录制序列`);
       });
 
-      row.append(info, remove);
+      row.append(info, edit);
+
+      // 锁定输出的输入法（九键）：输出不可改、不能新增、不能删除
+      if (!locked) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'small-button';
+        remove.textContent = '删除';
+        remove.addEventListener('click', () => {
+          cubeKeyboard.removeRule(rule.id);
+          renderRules();
+          logMove(`已删除规则 ${rule.id}`);
+        });
+        row.append(remove);
+      }
+
       rulesList.appendChild(row);
     }
   }
 
-  function addRule() {
+  function startRecording() {
+    ruleRecorder = { tokens: [] };
+    syncEngineSuspension();
+    ruleRecordButton.textContent = '停止录制';
+    ruleRecordButton.classList.add('recording');
+    ruleSequenceInput.value = '';
+    ruleHint.textContent = '录制中：直接按 R/A/S/D/F/V（+Shift 逆时针）扭层，序列实时填入；再点一次「停止录制」结束。';
+  }
+
+  function stopRecording() {
+    ruleSequenceInput.value = ruleRecorder.tokens.join(' ');
+    ruleRecorder = null;
+    syncEngineSuspension();
+    ruleRecordButton.textContent = '录制';
+    ruleRecordButton.classList.remove('recording');
+    ruleHint.textContent = '点「录制」后直接按键扭层，序列会自动填入；也可手动输入，空格分隔多个扭转。';
+  }
+
+  function submitRule() {
+    const locked = Boolean(currentProfile.lockOutput);
     const sequenceText = ruleSequenceInput.value.trim();
-    const outputText = ruleOutputInput.value;
-    if (!sequenceText || outputText === '') {
-      window.alert('请填写扭转序列和输出字符');
+    if (!sequenceText) {
+      showToast('请填写扭转序列（可用「录制」直接生成）', 'bad');
+      return;
+    }
+
+    let outputText = ruleOutputInput.value;
+    if (locked) {
+      // 九键等锁定输出的输入法：只能改序列，输出沿用正在编辑的规则
+      if (!editingRuleId) {
+        showToast('该输入法的输出由布局固定，只能编辑已有规则的扭转层', 'bad');
+        return;
+      }
+      outputText = editingRuleOutput;
+    } else if (outputText === '') {
+      showToast('请填写输出字符', 'bad');
       return;
     }
 
     const when = sequenceText.split(/\s+/);
+    const id = editingRuleId || `rule-${Date.now()}`;
 
     try {
-      cubeKeyboard.registerRule({
-        id: `rule-${Date.now()}`,
-        type: 'turn-sequence',
-        when,
-        output: outputText,
-      });
-      ruleSequenceInput.value = '';
-      ruleOutputInput.value = '';
+      cubeKeyboard.registerRule({ id, type: 'turn-sequence', when, output: outputText });
+      logMove(`${editingRuleId ? '已更新' : '已添加'}规则：${sequenceText} → ${outputText}`);
+      clearRuleForm();
       renderRules();
-      logMove(`已添加规则：${sequenceText} → ${outputText}`);
     } catch (error) {
-      window.alert(`添加规则失败：${error.message}`);
+      showToast(`保存规则失败：${error.message}`, 'bad');
     }
   }
 
-  function getStickerCells(face) {
-    const map = cubeKeyboard.listStickerMaps().find((item) => item.face === face);
-    return map?.cells || {};
+  function clearRuleForm() {
+    editingRuleId = null;
+    editingRuleOutput = null;
+    ruleSequenceInput.value = '';
+    ruleOutputInput.value = '';
+    ruleAddButton.textContent = '添加规则';
   }
 
-  function renderStickerGrid() {
-    const face = stickerFaceSelect.value;
-    const cells = getStickerCells(face);
-    stickerGrid.innerHTML = '';
+  // 依据当前输入法是否锁定输出，调整规则表单
+  function refreshRuleFormForProfile() {
+    const locked = Boolean(currentProfile.lockOutput);
+    ruleOutputInput.disabled = locked;
+    ruleOutputInput.placeholder = locked ? '输出由九键布局固定（abc/def…）' : '输出，如 a';
+    // 锁定时仍保留按钮：它用于"更新"已有规则的扭转层（新增会被 submitRule 拦截）
+    ruleAddButton.hidden = false;
+    if (locked) ruleOutputInput.value = '';
+  }
 
-    for (let row = 0; row < 3; row += 1) {
-      for (let col = 0; col < 3; col += 1) {
-        const key = `${row},${col}`;
-        const output = cells[key];
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'sticker-cell';
-        button.dataset.row = row;
-        button.dataset.col = col;
-        button.textContent = typeof output === 'string' ? output : output?.text ?? '';
-
-        if (selectedStickerCell && selectedStickerCell.row === row && selectedStickerCell.col === col) {
-          button.classList.add('selected');
-        }
-
-        button.addEventListener('click', () => {
-          selectedStickerCell = { row, col };
-          stickerOutputInput.value = typeof output === 'string' ? output : output?.text ?? '';
-          renderStickerGrid();
-          cubeKeyboard.triggerSticker(face, { row, col });
-        });
-
-        stickerGrid.appendChild(button);
-      }
+  // ---------- 输入法切换 ----------
+  function populateImeSelect() {
+    imeSelect.innerHTML = '';
+    for (const profile of IME_PROFILES) {
+      imeSelect.add(new Option(profile.name, profile.id));
     }
+    const stored = cubeKeyboard.config.activeIme;
+    imeSelect.value = IME_PROFILES.some((profile) => profile.id === stored) ? stored : 'pinyin26';
   }
 
-  function saveStickerCell() {
-    if (!selectedStickerCell) {
-      window.alert('请先点击一个格子');
-      return;
-    }
-    const text = stickerOutputInput.value;
-    if (text === '') {
-      cubeKeyboard.clearStickerCell(stickerFaceSelect.value, selectedStickerCell.row, selectedStickerCell.col);
-      logMove('已清空该格映射');
-    } else {
-      cubeKeyboard.setStickerCell(stickerFaceSelect.value, selectedStickerCell.row, selectedStickerCell.col, text);
-      logMove(`已保存该格映射：${text}`);
-    }
-    renderStickerGrid();
-  }
+  function switchIme(profileId) {
+    const profile = getProfile(profileId);
+    currentProfile = profile;
+    cubeKeyboard.activateProfile(profile.id, profile.defaultRules);
+    cubeKeyboard.renderer.setPickEnabled(true);
 
-  function clearStickerCell() {
-    if (!selectedStickerCell) {
-      window.alert('请先点击一个格子');
-      return;
-    }
-    cubeKeyboard.clearStickerCell(stickerFaceSelect.value, selectedStickerCell.row, selectedStickerCell.col);
-    stickerOutputInput.value = '';
-    logMove('已清空该格映射');
-    renderStickerGrid();
-  }
-
-  function setInputMode(mode) {
-    inputMode = mode;
-    const isSticker = mode === 'sticker';
-    panelRules.hidden = isSticker;
-    panelSticker.hidden = !isSticker;
-    modeSequencesButton.classList.toggle('active', !isSticker);
-    modeStickerButton.classList.toggle('active', isSticker);
-    modeHint.textContent = isSticker
-      ? '当前：九宫格模式（点击 3×3 贴纸直接输出）'
-      : '当前：通过扭转序列输出字符';
-  }
-
-  function applyStickerPreset() {
-    const face = stickerFaceSelect.value;
-    const preset = stickerPresetSelect.value;
-    const layouts = {
-      qwe: ['Q', 'W', 'E', 'A', 'S', 'D', 'Z', 'X', 'C'],
-      abc: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'],
-      num: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+    cubeKeyboard.applyCellsToRenderer();
+    imeEngine = createImeEngine(profile, imeBar, { t9Dict: t9Dict.syllables });
+    imeBar.setStatus(profile.name);
+    imeBar.onCandidate = (text) => imeEngine?.choose(text);
+    imeBar.onBackspace = () => imeEngine?.backspace();
+    imeBar.onClear = () => {
+      imeEngine?.reset();
+      imeBar.clearOutput();
+      logMove('输入法已清空');
     };
-    const chars = layouts[preset] || layouts.qwe;
+    imeBar.reset();
 
-    let index = 0;
-    for (let row = 0; row < 3; row += 1) {
-      for (let col = 0; col < 3; col += 1) {
-        cubeKeyboard.setStickerCell(face, row, col, chars[index]);
-        index += 1;
-      }
-    }
-
-    selectedStickerCell = null;
-    stickerOutputInput.value = '';
-    renderStickerGrid();
-    logMove(`已应用九宫格预设：${preset}（${FACE_NAMES_ZH[face] || face}）`);
+    imeDesc.textContent = profile.description;
+    refreshRuleFormForProfile();
+    clearRuleForm();
+    syncEngineSuspension();
+    renderRules();
+    logMove(`已切换输入法：${profile.name}`);
   }
 
-  function clearStickerFace() {
-    const face = stickerFaceSelect.value;
-    for (let row = 0; row < 3; row += 1) {
-      for (let col = 0; col < 3; col += 1) {
-        cubeKeyboard.clearStickerCell(face, row, col);
-      }
-    }
-    selectedStickerCell = null;
-    stickerOutputInput.value = '';
-    renderStickerGrid();
-    logMove(`已清空该面九宫格映射（${FACE_NAMES_ZH[face] || face}）`);
+  // ---------- 格子编辑模式（可拖动浮窗） ----------
+  function markUnsaved() {
+    cellsSaveFloat.hidden = false;
+    cellsUnsaved.textContent = '有未保存的修改，点右上角「保存」写入本地存储';
   }
 
-  // 参考系变更：同时更新配置与魔方配色
-  function onReferenceChange() {
-    cubeKeyboard.setReference({
-      front: frontSelect.value,
-      up: upSelect.value,
+  function markSaved() {
+    cellsSaveFloat.hidden = true;
+    cellsUnsaved.textContent = '';
+  }
+
+  function bringPopupToFront(root) {
+    popupZTop += 1;
+    root.style.zIndex = String(popupZTop);
+  }
+
+  function saveEditor(cellId, input) {
+    cubeKeyboard.setCellText(cellId, input.value);
+    markUnsaved();
+    logMove(`格子 ${cellId} 已暂存：${input.value || '（空）'}`);
+  }
+
+  function closeEditor(cellId) {
+    const editor = openEditors.get(cellId);
+    if (!editor) return;
+    editor.root.remove();
+    openEditors.delete(cellId);
+  }
+
+  function openCellEditor(cellId) {
+    if (openEditors.has(cellId)) {
+      const existing = openEditors.get(cellId);
+      bringPopupToFront(existing.root);
+      existing.input.focus();
+      return;
+    }
+
+    const root = document.createElement('div');
+    root.className = 'cell-editor';
+
+    const head = document.createElement('div');
+    head.className = 'cell-editor-head';
+    const title = document.createElement('span');
+    title.className = 'cell-editor-title';
+    title.textContent = `格子 ${cellId}`;
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '×';
+    closeBtn.title = '取消并关闭';
+    head.append(title, closeBtn);
+
+    const input = document.createElement('input');
+    input.value = cubeKeyboard.getCellText(cellId);
+    input.placeholder = '输入该格显示的文字';
+    input.spellcheck = false;
+
+    const foot = document.createElement('div');
+    foot.className = 'cell-editor-foot';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'primary-button';
+    saveBtn.textContent = '保存';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = '取消';
+    foot.append(saveBtn, cancelBtn);
+
+    root.append(head, input, foot);
+    popupLayer.appendChild(root);
+
+    const offset = openEditors.size * 26;
+    const left = Math.min(window.innerWidth - 280, 380 + offset);
+    const top = Math.min(window.innerHeight - 190, 120 + offset);
+    root.style.left = `${Math.max(8, left)}px`;
+    root.style.top = `${Math.max(8, top)}px`;
+    bringPopupToFront(root);
+
+    let drag = null;
+    head.addEventListener('pointerdown', (event) => {
+      if (event.target === closeBtn) return;
+      event.preventDefault();
+      drag = { pointerId: event.pointerId, offsetX: event.clientX - root.offsetLeft, offsetY: event.clientY - root.offsetTop };
+      head.setPointerCapture(event.pointerId);
     });
+    head.addEventListener('pointermove', (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      root.style.left = `${Math.max(4, event.clientX - drag.offsetX)}px`;
+      root.style.top = `${Math.max(4, event.clientY - drag.offsetY)}px`;
+    });
+    const endDrag = (event) => {
+      if (drag && event.pointerId !== drag.pointerId) return;
+      drag = null;
+    };
+    head.addEventListener('pointerup', endDrag);
+    head.addEventListener('pointercancel', endDrag);
+    head.addEventListener('dragstart', (event) => event.preventDefault());
+
+    root.addEventListener('pointerdown', () => bringPopupToFront(root));
+    saveBtn.addEventListener('click', () => saveEditor(cellId, input));
+    cancelBtn.addEventListener('click', () => closeEditor(cellId));
+    closeBtn.addEventListener('click', () => closeEditor(cellId));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        saveEditor(cellId, input);
+      } else if (event.key === 'Escape') {
+        closeEditor(cellId);
+      }
+    });
+
+    openEditors.set(cellId, { root, input });
+    input.focus();
+  }
+
+  function closeAllEditors() {
+    for (const cellId of [...openEditors.keys()]) closeEditor(cellId);
+  }
+
+  function enterEditMode() {
+    editMode = true;
+    editModeButton.textContent = '退出编辑模式';
+    editModeButton.classList.remove('primary-button');
+    cellsHint.textContent = '编辑模式中：点击魔方格子弹出编辑浮窗（可拖动、回车保存）；魔方仍可旋转，格子编号不会因旋转改变。改完点右上角「保存」。';
+    syncEngineSuspension();
+    logMove('已进入编辑模式');
+  }
+
+  function exitEditMode() {
+    if (!editMode) return;
+    editMode = false;
+    closeAllEditors();
+    editModeButton.textContent = '进入编辑模式';
+    editModeButton.classList.add('primary-button');
+    cellsHint.textContent = '鼠标悬停魔方格子会显示焦点；普通模式点击格子可输出其文字。编辑模式下点击格子即可修改文字，改完点右上角的「保存」按钮持久化。';
+    syncEngineSuspension();
+    logMove('已退出编辑模式');
+  }
+
+  function saveAllCells() {
+    cubeKeyboard.saveCells();
+    markSaved();
+    showToast('已保存全部格子文字', 'ok');
+    logMove('已保存：全部格子文字写入本地存储');
+  }
+
+  // ---------- 九宫格模式（独立实验模块，非输入法） ----------
+  async function setT9Mode(on) {
+    if (on) {
+      const loader = T9_MODULE_LOADERS[T9_MODULE_PATH];
+      if (!loader) {
+        showToast('九宫格模块未安装（src/t9/）', 'bad');
+        return;
+      }
+      exitEditMode();
+      if (ruleRecorder) stopRecording();
+      sidebarCollapsedBeforeT9 = document.body.classList.contains('sidebar-collapsed');
+      t9Module = (await loader()).createT9Module({ cubeKeyboard, imeBar, profile: { name: '九宫格模式' } });
+      t9Module.activate();
+      t9Active = true;
+      document.body.classList.add('t9-mode');
+      t9Button.classList.add('active');
+      t9Button.textContent = '退出九宫格';
+      syncEngineSuspension();
+      logMove('已进入九宫格模式（侧栏已锁定，点右上角按钮退出）');
+      return;
+    }
+
+    t9Module?.deactivate();
+    t9Module = null;
+    t9Active = false;
+    document.body.classList.remove('t9-mode');
+    t9Button.classList.remove('active');
+    t9Button.textContent = '九宫格模式';
+    // 恢复当前输入法的贴纸文字与输入法栏回调
+    switchIme(cubeKeyboard.config.activeIme || 'pinyin26');
+    if (sidebarCollapsedBeforeT9) setSidebarCollapsed(true);
+    logMove('已退出九宫格模式');
+  }
+
+  // ---------- 模拟触摸：悬停焦点 + 点击输出 ----------
+  cubeKeyboard.renderer.onCellClick(({ cellId }) => {
+    if (t9Active) return; // 九宫格模式只认旋转输入
+    if (editMode) {
+      openCellEditor(cellId);
+      return;
+    }
+    const text = cubeKeyboard.triggerCell(cellId);
+    if (text) logMove(`触摸格子 ${cellId} → ${text}`);
+  });
+
+  // ---------- 规则输出 → 当前输入法 ----------
+  cubeKeyboard.on('output', (output) => {
+    const text = typeof output === 'string' ? output : output?.text ?? '';
+    if (text) imeEngine?.receive(text);
+  });
+
+  // 录制：捕获用户视角扭转
+  cubeKeyboard.on('turn', ({ face, dir, logical }) => {
+    if (!ruleRecorder || !logical) return;
+    ruleRecorder.tokens.push(dir === -1 ? `${face}'` : dir === 2 ? `${face}2` : face);
+    ruleSequenceInput.value = ruleRecorder.tokens.join(' ');
+  });
+
+  cubeKeyboard.on('referencechange', () => {
+    refreshReference();
+    renderKeymap();
+  });
+
+  cubeKeyboard.on('configchange', () => {
+    renderKeymap();
+    if (!t9Active) cubeKeyboard.applyCellsToRenderer();
+  });
+
+  // ---------- 事件绑定 ----------
+  for (const color of COLOR_NAMES) {
+    frontSelect.add(new Option(color, color));
+    upSelect.add(new Option(color, color));
+  }
+
+  function onReferenceChange() {
+    cubeKeyboard.setReference({ front: frontSelect.value, up: upSelect.value });
     refreshReference();
     logMove('已更新参考系（魔方已复原）');
   }
@@ -362,43 +598,83 @@ export function setupUI(cubeKeyboard) {
     refreshReference();
     logMove('方向模拟视角已重置');
   });
+
   sidebarToggleButton.addEventListener('click', () => {
     setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   });
-  cubeKeyboard.on('referencechange', () => {
-    refreshReference();
-    renderKeymap();
-  });
 
-  resetButton.addEventListener('click', () => {
+  t9Button.addEventListener('click', () => setT9Mode(!t9Active));
+
+  resetCubeButton.addEventListener('click', () => {
     cubeKeyboard.resetCube();
-    logMove('魔方已重置');
+    logMove('魔方方向已重置');
   });
 
-  resetConfigButton.addEventListener('click', () => {
-    cubeKeyboard.resetConfig();
-    setReferenceMode('manual');
-    refreshReference();
-    renderKeymap();
+  resetCurrentRulesButton.addEventListener('click', () => {
+    cubeKeyboard.resetImeRules(currentProfile.id, currentProfile.defaultRules);
     renderRules();
-    renderStickerGrid();
-    turnDurationInput.value = String(cubeKeyboard.config.turnDurationMs ?? 180);
-    turnDurationLabel.textContent = `${turnDurationInput.value}ms`;
-    logMove('已恢复默认配置');
+    showToast(`已重置「${currentProfile.name}」的扭转规则`, 'ok');
+    logMove(`已重置「${currentProfile.name}」的扭转规则表`);
   });
 
-  if (turnDurationInput) {
-    turnDurationInput.value = String(cubeKeyboard.config.turnDurationMs ?? 180);
-    turnDurationLabel.textContent = `${turnDurationInput.value}ms`;
-    turnDurationInput.addEventListener('input', () => {
-      const value = Number(turnDurationInput.value);
-      cubeKeyboard.setTurnDuration(value);
-      turnDurationLabel.textContent = `${value}ms`;
-    });
+  resetAllRulesButton.addEventListener('click', () => {
+    for (const profile of IME_PROFILES) {
+      cubeKeyboard.resetImeRules(profile.id, profile.defaultRules);
+    }
+    renderRules();
+    showToast('已重置所有输入法的扭转规则', 'ok');
+    logMove('已重置所有输入法的扭转规则表');
+  });
+
+  exportRulesButton.addEventListener('click', () => {
+    const payload = cubeKeyboard.exportImeRules();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `cube-keyboard-rules-${payload.ime}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    logMove(`已导出「${currentProfile.name}」的扭转规则`);
+  });
+
+  importRulesInput.addEventListener('change', async () => {
+    const file = importRulesInput.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const knownImes = IME_PROFILES.map((profile) => profile.id);
+      const result = cubeKeyboard.importImeRules(payload, knownImes);
+      if (result.ok) {
+        renderRules();
+        showToast(result.message, 'ok');
+        logMove(result.message);
+      } else {
+        showToast(result.message, 'bad');
+        logMove(`导入被拒绝：${result.message}`);
+      }
+    } catch (error) {
+      showToast(`导入失败：${error.message}`, 'bad');
+    } finally {
+      importRulesInput.value = '';
+    }
+  });
+
+  function syncRangeProgress() {
+    const min = Number(turnDurationInput.min) || 0;
+    const max = Number(turnDurationInput.max) || 100;
+    const value = Number(turnDurationInput.value);
+    turnDurationInput.style.setProperty('--range-progress', String((value - min) / (max - min)));
   }
 
-  exportButton.addEventListener('click', () => {
-    downloadConfig(cubeKeyboard.exportConfig());
+  turnDurationInput.value = String(cubeKeyboard.config.turnDurationMs ?? 180);
+  syncRangeProgress();
+  turnDurationInput.addEventListener('input', () => {
+    const value = Number(turnDurationInput.value);
+    cubeKeyboard.setTurnDuration(value);
+    turnDurationLabel.textContent = `${value}ms`;
+    syncRangeProgress();
   });
 
   axesButton.addEventListener('click', () => {
@@ -407,48 +683,21 @@ export function setupUI(cubeKeyboard) {
     axesButton.textContent = axesVisible ? '隐藏参考线' : '显示参考线';
   });
 
-  importInput.addEventListener('change', async () => {
-    const file = importInput.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      cubeKeyboard.loadConfig(text);
-      refreshReference();
-      renderKeymap();
-      renderRules();
-      renderStickerGrid();
-      logMove('配置已导入');
-    } catch (error) {
-      window.alert(`导入失败：${error.message}`);
-    } finally {
-      importInput.value = '';
-    }
+  imeSelect.addEventListener('change', () => switchIme(imeSelect.value));
+  ruleRecordButton.addEventListener('click', () => {
+    if (ruleRecorder) stopRecording();
+    else startRecording();
   });
-
-  imeModeButton.addEventListener('click', () => ime.toggleMode());
-  imeClearButton.addEventListener('click', () => {
-    ime.clearOutput();
-    logMove('虚拟输入法已清空');
+  ruleAddButton.addEventListener('click', submitRule);
+  editModeButton.addEventListener('click', () => {
+    if (editMode) exitEditMode();
+    else enterEditMode();
   });
+  cellsSaveFloat.addEventListener('click', saveAllCells);
 
-  ruleAddButton.addEventListener('click', addRule);
-  modeSequencesButton.addEventListener('click', () => setInputMode('sequences'));
-  modeStickerButton.addEventListener('click', () => setInputMode('sticker'));
-  stickerFaceSelect.addEventListener('change', () => {
-    selectedStickerCell = null;
-    stickerOutputInput.value = '';
-    renderStickerGrid();
-  });
-  stickerSaveButton.addEventListener('click', saveStickerCell);
-  stickerClearButton.addEventListener('click', clearStickerCell);
-  stickerApplyPresetButton.addEventListener('click', applyStickerPreset);
-  stickerClearFaceButton.addEventListener('click', clearStickerFace);
-
-  // 键盘控制魔方：E/A/S/D/F/C 分别对应顶/左/正/右/背/底
+  // 键盘控制魔方：R/A/S/D/F/V 分别对应顶/左/正/右/背/底（键位以 defaultConfig.js 为唯一权威来源）
   window.addEventListener('keydown', async (event) => {
-    // 避开浏览器快捷键：Ctrl/Alt/Meta 组合键不处理
     if (event.ctrlKey || event.altKey || event.metaKey) return;
-    // 输入框中正常打字，不触发魔方扭转
     if (event.target.matches('input, textarea, select')) return;
 
     const key = event.key.toLowerCase();
@@ -465,12 +714,13 @@ export function setupUI(cubeKeyboard) {
     }
   });
 
-  // 初始渲染
-  setInputMode('sequences');
+  // ---------- 初始渲染 ----------
+  populateImeSelect();
   setReferenceMode(cubeKeyboard.pose.mode || 'manual');
   refreshReference();
   renderKeymap();
-  renderRules();
-  renderStickerGrid();
+  markSaved();
+  if (!T9_MODULE_LOADERS[T9_MODULE_PATH]) t9Button.hidden = true;
+  switchIme(cubeKeyboard.config.activeIme || 'pinyin26');
   logMove('魔方键盘已就绪');
 }

@@ -1,6 +1,8 @@
 # 魔方键盘（Cube Keyboard）
 
-一个基于 Web 的 3D 魔方展示与“扭动 → 字符输出”可编程原型。当前版本为 **M3**：在 M2 规则引擎和虚拟输入法基础上，加入方向模拟、动态层映射、完整相机交互和扭转速度调节。
+一个基于 Web 的 3D 魔方展示与“扭动 → 字符输出”可编程原型。当前版本为 **v0.4**：输入法体系全面重构——五套输入法（26键拼音 / 双拼 / 五笔预留 / 纯英文 / 九宫格拼音）各自拥有独立配置与扭转规则表，新增模拟触摸（悬停焦点 / 点击取字）、贴纸唯一编号与编辑模式、九宫格独立模块、抽屉把手式侧边栏与悬浮输入法栏。
+
+> 键位与配置变更史见 [docs/计划书.md](docs/计划书.md)（v0.4）。旧版计划书已归档为 `docs/计划书-2026-08-16.zip`（已失效，不需要查看）。
 
 最终目标是做一个现实中的“魔方键盘”硬件，但当前仓库只负责软件原型、规则引擎、页面内虚拟输入法和方向模拟。**本项目不读取真实硬件方向，不接系统级输入法。**
 
@@ -13,133 +15,125 @@
 
 ## 快速开始
 
-开发模式（热更新）：
-
 ```bash
 npm install
-npm run dev
+npm run dev          # 开发模式（热更新）
+npm run build        # 构建单文件 dist/index.html（Three.js 与字库全部内联，离线可用）
+npm run preview      # 预览构建产物
 ```
 
-构建为单个静态文件：
+测试：
 
 ```bash
-npm run build
+npm test             # Node 逻辑测试（不依赖浏览器）
+npm run test:e2e     # Playwright 浏览器端到端测试（首次运行会自动下载浏览器）
 ```
 
-构建产物在 `dist/index.html`，Three.js 已全部内联，无需联网。
+## 键盘映射（唯一权威来源：src/mapping/defaultConfig.js）
 
-预览构建产物：
-
-```bash
-npm run preview
-```
-
-## 默认键盘映射
-
-键位按六面体展开图布局：
+六面键位**固定**为 a / s / d / f / r / v：
 
 ```text
-            E（顶面 U）
-        J（竖中层 M）
-A（左面 L） S（正面 F） D（右面 R） F（背面 B）
-        K（横中层 E）
-            C（底面 D）
-  另外：L 键 = 前后中层 S
+        R（顶面 U）
+  A（左 L） S（正 F） D（右 R） F（背 B）
+        V（底面 D）
 ```
 
-- 直接按键 = 顺时针扭转该面
-- `Shift + 按键` = 逆时针扭转该面
-- 键位、参考系颜色都可以在配置中修改
+另有 j / k / l 三个中层键：J = 竖中层 M，K = 横中层 E，L = 前后中层 S。
+
+- 直接按键 = 顺时针扭转该层
+- `Shift + 按键` = 逆时针扭转该层
+
+> 历史教训：v2 曾有“旧键位静默迁移”代码把 r/v 改写成 e/c，导致键位漂移。v3 起已彻底删除迁移逻辑，键位只认 `defaultConfig.js`；修改键位请同步更新 README 与页面提示文案，**不要写任何迁移代码**。
 
 鼠标左键 / 单指旋转视角，鼠标右键 / 双指平移，滚轮 / 捏合缩放；旋转中心固定在魔方中心。
 
-## 渲染方式
+## 界面布局
 
-- 浏览器支持 WebGL 时：使用 Three.js 的完整 3D 渲染。
-- 页面左侧“运行自检”会显示当前 WebGL 状态和渲染诊断。
-- Canvas 2D 软件渲染当前不实现，只作为后续预留项。
+- **侧边栏（一体导轨式）**：开关把手是侧边栏右侧一条 36px 导轨的一部分，与面板同属一个动画容器、共用同一个 transform；把手不遮挡面板滚动条。收起后侧边栏滑出屏幕、导轨恰好留在屏幕左缘，随时可再展开。
+- **悬浮输入法栏**：所有输入法共用，按住标题栏可任意拖动，拖拽四边 / 四角可像窗口一样缩放；含状态、组词预览、分页候选（鼠标点选 / 数字键 1-9 / ‹ › 翻页）、输出区、退格 / 清空。
+- **九宫格模式按钮（页面右上角）**：独立实验功能，见下文。
+- 侧栏面板：运行自检 → 输入法（下拉切换）→ 扭转规则（含录制）→ 格子与文字（编辑模式）→ 参考系 → 键盘映射 → 操作记录 → 动作。
 
-## 规则与虚拟输入法
+## 输入法体系（v0.4 重构核心）
 
-- **输入模式**：界面顶部可在“扭转序列”与“九宫格”两种模式之间切换。
-- **扭转序列规则**：例如“先转右面 R，再转背面 B”对应输出 `a`。默认演示规则为 `R B → a`。
-  - 默认还内置模拟功能规则：`M → ⌫`（模拟删除）、`E → ␣`（模拟空格）、`S → ⇥`（模拟补全），分别对应键盘 `J / K / L`。
-  - 序列采用“缓冲 + 最长后缀匹配”：每次输入后立即检查当前缓冲，命中规则就立即输出，无需手动提交或等待。
-  - 输入 `D` 键（右面 R）、`F` 键（背面 B）后，即可立即在虚拟输入法看到 `a`。
-- **九宫格模式**：选择某个逻辑面，点击 3×3 格子即可输出对应字符。支持 QWERTY / 字母顺序 / 数字 1-9 预设，也可单独编辑某格。
-  - 该模式当前功能定位仍不明确，后续需要进一步改进。
-- **虚拟输入法**：页面内简单虚拟输入法，不是系统输入法。
-  - 英文模式：直接输出。
-  - 中文模式：纯英文字母 / 数字视为拼音并显示候选，中文 / 符号直接上屏。
-  - 当前拼音候选表是轻量演示版本，后续可再扩展。
+每个输入法一个 JSON 配置，位于 [src/configs/ime/](src/configs/ime/)，包含名称、引擎类型、**专属默认扭转规则表**等。切换输入法即切换它的规则表；增删的规则按输入法分表持久化，互不干扰。
 
-## 默认参考系与配色
+| 输入法 | 状态 | 打字方式 |
+| --- | --- | --- |
+| 26键拼音 | 完整实现 | 两段扭转出字母，字母累积成拼音，候选点选 |
+| 九键拼音 | 完整实现 | 扭一层输出一个按键字母组（abc/def…），组→数字→九键拼音候选 |
+| 双拼（小鹤） | 简版实现 | 两键定一个音节（如 h+c = hao），复用拼音候选 |
+| 五笔 | 预留 | 规则表生效，字母只记录展示，字库接口已留 |
+| 纯英文 | 完整实现 | 字母直接上屏 |
 
-- 正面（F）= 白色
-- 顶面（U）= 红色
-- 背面（B）= 黄色
-- 底面（D）= 橙色
-- 右面（R）= 蓝色
-- 左面（L）= 绿色
+> 九键拼音是与其他输入法**平级**的正式输入法；**九宫格模式**是另一回事——它是页面右上角的独立实验开关，见下文。两者都用到九键拼音引擎（`src/ime/t9Engine.js`），但互不绑定。
 
-界面左侧“参考系”支持两种模式：
+### 九键拼音的规则表（输出锁定）
 
-- **手动**：直接选择正面 / 顶面颜色；魔方中层转动后，正面 / 顶面继续跟随所选颜色。
-- **方向模拟**：不读取真实设备方向，而是用固定 XYZ 和当前 3D 相机视角判断魔方哪个面朝上、哪个面朝向用户。
+九键的每条规则输出一个按键的字母组：`abc / def / ghi / jkl / mno / pqrs / tuv / wxyz / 标点`。这些**输出文字由九键布局决定、不可修改**，只能改每条规则前面的扭转层（添加按钮隐藏、删除按钮隐藏、输出框禁用）。默认表里每个字母组用单层扭转（正反方向都映射到同一组）。
 
-方向模拟的默认定义是：顶面 = 屏幕上方方向对应的面，正面 = 朝向用户方向对应的面。
+### 默认扭转规则表（26键 / 双拼 / 五笔 / 英文可自由改）
+
+字母区统一为“**两段扭转 = 一个字母**”：第一段选行（U/E/D），第二段选列（L/M/R/F/B），第二段带 `'` 为逆时针：
+
+```text
+a=U L   b=U L'  c=U M   d=U M'  e=U R   f=U R'  g=U F   h=U F'  i=U B   j=U B'
+k=E L   l=E L'  m=E M   n=E M'  o=E R   p=E R'  q=E F   r=E F'  s=E B   t=E B'
+u=D L   v=D L'  w=D M   x=D M'  y=D R   z=D R'
+```
+
+26 个字母恰好占满 3×5×2 个槽位；全部等长，因此“缓冲 + 最长后缀匹配”天然无前缀歧义，连打也不会误命中。
+功能键独立占用前后中层 S：`S → ␣`（空格）、`S' → ⌫`（退格）、`S2 → ⇥`（上屏缓冲原文）。
+对应键盘：U=R、D=V、L=A、M=J、R=D、F=S、B=F、S=L。记法图例（U/D/L/R/F/B/M/E/S 对应哪个面）也直接显示在"扭转规则"面板里。
+
+### 规则录制
+
+「扭转规则」面板的**录制**按钮：开启后直接按 a/s/d/f/r/v 扭层，序列实时填入（类似快捷键录制），再填输出字符保存。规则支持编辑（可重新录制）与删除。录制期间规则引擎暂停输出。
+
+## 模拟触摸与编辑模式
+
+- **贴纸唯一编号**：54 个贴纸按复原态阅读顺序编号（F1..F9、U1..U9……），编号绑定在小块上、随旋转永不改变。
+- **模拟触摸**：鼠标悬停格子出现焦点高亮动画，移出魔方即消失；普通模式点击格子，输出该格写着的文字（进输入法组词）。
+- **编辑模式**：侧栏「进入编辑模式」后，点击格子弹出可拖动编辑浮窗——顶部显示唯一编号、回车即保存、可同时开多个、点谁谁置顶；魔方仍可旋转，编号不会混淆。单格保存即时生效（暂存），**有未保存修改时页面右上角出现"保存"按钮**（侧栏内不再有"总保存"），点击统一写入 localStorage。
+- 超长文字在贴纸上只显示前 4 字符 + `…`。
+
+## 九宫格模式（独立实验，非输入法）
+
+- 入口是**页面右上角的「九宫格模式」按钮**，与输入法下拉完全无关。
+- 开启后：侧边栏自动收起并**锁定不可展开**、规则引擎暂停、贴纸文字隐藏、正面 9 格显示标准电话键盘（1标点、2abc…9wxyz）。
+- 输入方式**只有旋转定位**：一次横向层（U/E/D 定行）+ 一次纵向层（L/M/R 定列），不分先后顺逆，交点即唯一格子，两次旋转输出一个数字键；同轴连转以最后一次为准；F/B 不参与。键位文字**实时跟随当前正面**。
+- 再点一次按钮退出，恢复原输入法、贴纸文字与侧栏。
+- 实现完全隔离在 `src/t9/`，通过 `import.meta.glob` 懒加载。**删除 `src/t9/` 后按钮自动隐藏，其余功能（含九键拼音输入法）零影响**——这是可随时交给智能体删掉的临时测试功能。
+- 九宫格与九键拼音都用到 `src/ime/t9Engine.js` 引擎；删 `src/t9/` 不影响九键拼音输入法。
+
+## 参考系与配色
+
+- 正面（F）= 白色，顶面（U）= 红色，背面 = 黄色，底面 = 橙色，右面 = 蓝色，左面 = 绿色。
+- **手动**：直接选择正面 / 顶面颜色；中层转动后跟随所选颜色。
+- **方向模拟**：不读取真实设备方向，用当前 3D 相机视角判断哪面朝上、哪面朝向用户。九宫格模式会自动切到该模式，退出时恢复。
 
 ## 配置
 
-默认配置唯一来源是 [src/mapping/defaultConfig.js](src/mapping/defaultConfig.js)，结构如下：
+默认配置唯一来源是 [src/mapping/defaultConfig.js](src/mapping/defaultConfig.js)。v3 配置结构：
 
 ```js
 export const DEFAULT_CONFIG = {
-  version: 1,
+  version: 3,
   reference: { front: 'white', up: 'red' },
   turnDurationMs: 180,
-  keymap: {
-    e: { face: 'U' },
-    a: { face: 'L' },
-    s: { face: 'F' },
-    d: { face: 'R' },
-    f: { face: 'B' },
-    c: { face: 'D' },
-    j: { face: 'M' },
-    k: { face: 'E' },
-    l: { face: 'S' },
+  keymap: {                     // 键位唯一权威来源
+    r: { face: 'U' }, a: { face: 'L' }, s: { face: 'F' },
+    d: { face: 'R' }, f: { face: 'B' }, v: { face: 'D' },
+    j: { face: 'M' }, k: { face: 'E' }, l: { face: 'S' },
   },
-  rules: [
-    {
-      id: 'demo-a',
-      type: 'turn-sequence',
-      when: ['R', 'B'],
-      output: 'a',
-    },
-    {
-      id: 'default-delete',
-      type: 'turn-sequence',
-      when: ['M'],
-      output: '⌫',
-    },
-    {
-      id: 'default-space',
-      type: 'turn-sequence',
-      when: ['E'],
-      output: '␣',
-    },
-    {
-      id: 'default-complete',
-      type: 'turn-sequence',
-      when: ['S'],
-      output: '⇥',
-    },
-  ],
-  stickerMaps: [],
+  activeIme: 'pinyin26',        // 当前输入法（对应 src/configs/ime/*.json）
+  imeRules: {},                 // 各输入法各自的扭转规则表（空缺时用 profile 默认表）
+  cells: { F1: 'Q', F2: 'W', /* ... */ },  // 贴纸编号 → 文字
 };
 ```
 
-界面支持“导出配置”和“导入配置”。所有配置变更都会自动保存到浏览器 `localStorage`，并提供“重置所有配置”按钮恢复默认值。
+配置存于 localStorage `cube-keyboard-config-v3`。**v3 不做任何旧配置迁移**：旧版本存档直接作废。动作面板支持：重置魔方方向、重置当前 / 所有输入法的扭转规则、导出 / 导入**当前输入法**的扭转规则（导出文件带输入法标识，导入到不匹配的输入法会被页面提示拒绝）。
 
 ## 对外接口（供大模型 / 开发者调用）
 
@@ -148,55 +142,51 @@ export const DEFAULT_CONFIG = {
 ```js
 // 操作魔方
 await CubeKeyboard.applyMove("F");
-await CubeKeyboard.applyMove("R'");
-await CubeKeyboard.applyMove("U2");
 await CubeKeyboard.turnRelative("F");
 CubeKeyboard.resolveRelativeTurn("F", 1);
-CubeKeyboard.getResolvedKeymap();
 CubeKeyboard.resetCube();
 
 // 配置读写
 CubeKeyboard.loadConfig(json);
-const cfg = CubeKeyboard.exportConfig();
-CubeKeyboard.saveConfig();
+CubeKeyboard.exportConfig();
 CubeKeyboard.resetConfig();
 CubeKeyboard.setTurnDuration(180);
 
-// 规则管理
-CubeKeyboard.registerRule({
-  id: "a",
-  type: "turn-sequence",
-  when: ["R", "B"],
-  output: "a",
-});
-CubeKeyboard.removeRule("a");
-CubeKeyboard.listRules();
+// 输入法 profile
+CubeKeyboard.activateProfile("shuangpin", defaultRules);
+CubeKeyboard.getActiveProfile();
+CubeKeyboard.setEngineSuspended(true);   // 暂停规则引擎（九宫格/录制/编辑模式用）
+CubeKeyboard.isEngineSuspended();
 
-// 贴纸 / 九宫格映射
-CubeKeyboard.registerStickerMap({
-  id: "front-9",
-  face: "F",
-  cells: { "0,0": "a" },
-});
-CubeKeyboard.removeStickerMap("front-9");
-CubeKeyboard.listStickerMaps();
-CubeKeyboard.triggerSticker("F", { row: 0, col: 0 });
-CubeKeyboard.setStickerCell("F", 1, 2, "X");
-CubeKeyboard.clearStickerCell("F", 1, 2);
+// 规则管理（作用于当前输入法的规则表）
+CubeKeyboard.registerRule({ id: "x", type: "turn-sequence", when: ["U", "L"], output: "a" });
+CubeKeyboard.removeRule("x");
+CubeKeyboard.listRules();
+CubeKeyboard.resetImeRules("wubi", defaultRules);   // 重置某输入法（省略 id 则当前）的规则表
+CubeKeyboard.exportImeRules();                       // { type, ime, rules } 带输入法标识
+CubeKeyboard.importImeRules(payload, knownImeIds);   // 校验标识匹配，返回 { ok, message }
+
+// 格子文字（贴纸唯一编号体系）
+CubeKeyboard.setCellText("F5", "你好");
+CubeKeyboard.getCellText("F5");
+CubeKeyboard.listCells();
+CubeKeyboard.listCellIds();
+CubeKeyboard.saveCells();                // 编辑模式：右上角"保存"按钮统一持久化
+CubeKeyboard.triggerCell("F1");          // 模拟触摸：输出该格文字
+CubeKeyboard.applyCellsToRenderer();
 
 // 参考系与朝向
 CubeKeyboard.setReference({ front: "white", up: "red" });
-CubeKeyboard.setPoseDetectorMode("manual");
 CubeKeyboard.setPoseDetectorMode("simulate");
-CubeKeyboard.getPoseReference();
 CubeKeyboard.getPoseDetection();
 CubeKeyboard.resetView();
-CubeKeyboard.setOrientationForTesting({ x: 0, y: 0, z: 0, w: 1 });
 
 // 事件订阅
 CubeKeyboard.on("output", (output) => console.log(output));
+CubeKeyboard.on("turn", ({ face, dir, logical }) => console.log(face, dir));
 CubeKeyboard.on("statechange", (state) => console.log(state));
-CubeKeyboard.on("turnschange", (buffer) => console.log(buffer));
+CubeKeyboard.on("cellschange", (cells) => console.log(cells));
+CubeKeyboard.on("cellssaved", (cells) => console.log(cells));
 CubeKeyboard.on("configchange", (config) => console.log(config));
 CubeKeyboard.on("referencechange", (reference) => console.log(reference));
 ```
@@ -209,49 +199,59 @@ CubeKeyboard.on("referencechange", (reference) => console.log(reference));
 src/
 ├─ main.js                         # 入口
 ├─ cube/
-│  ├─ CubeModel.js                 # 魔方逻辑状态与扭转
-│  ├─ CubeRenderer.js              # Three.js 渲染、相机交互与动画
+│  ├─ CubeModel.js                 # 魔方状态 + 贴纸唯一编号（cellIds/cellOwner/stickerAt）
+│  ├─ CubeRenderer.js              # Three.js 渲染 + 贴纸文字覆层 + raycast 拾取 + 焦点高亮
 │  ├─ CameraRig.js                 # 相机轨道与平移数学
 │  ├─ colors.js                    # 配色与面颜色推导
-│  ├─ orientationDetection.js      # 方向判定数学，仅用于方向模拟
+│  ├─ orientationDetection.js      # 方向判定数学（仅用于方向模拟）
 │  ├─ orientationMap.js            # 用户视角逻辑面到世界面映射
 │  └─ pose.js                      # 手动 / 方向模拟参考系
 ├─ mapping/
-│  ├─ ruleEngine.js                # 扭转序列与贴纸规则引擎
-│  ├─ config.js                    # 配置读取 / 保存 / 迁移 / 导出
-│  ├─ defaultConfig.js             # 运行时默认配置唯一来源
+│  ├─ ruleEngine.js                # 扭转序列规则引擎（缓冲 + 最长后缀匹配）
+│  ├─ config.js                    # v3 配置读取 / 保存 / 导出（无迁移）
+│  ├─ defaultConfig.js             # 键位唯一权威来源 + 默认规则表生成器
 │  ├─ notation.js                  # 扭转记法规范化
 │  └─ api.js                       # window.CubeKeyboard 接口
 ├─ ime/
-│  ├─ ImePanel.js                  # 页面内虚拟输入法
-│  └─ candidates.js                # 轻量拼音候选表
+│  ├─ ImeBar.js                    # 悬浮输入法栏（拖动 / 缩放 / 分页候选 / 组词预览）
+│  ├─ engines.js                   # 26键拼音 / 九键拼音 / 双拼 / 五笔预留 / 英文引擎
+│  ├─ profiles.js                  # 汇总 src/configs/ime/*.json
+│  ├─ t9Engine.js                  # 九键拼音引擎（数字切分 / 候选 / 选字，纯逻辑）
+│  ├─ t9-dict.json                 # 音节 → 高频字（生成产物，约 33KB）
+│  └─ candidates.js                # 拼音候选表（约 490 音节）
+├─ configs/ime/                    # 每个输入法一个 JSON（含专属默认规则表）
+├─ t9/                             # 九宫格模式实验模块（可整体删除，与输入法无关）
+│  └─ T9Module.js                  # 右上角按钮挂载 / 键位显示 / 两次旋转定位 / 退出恢复
 ├─ ui/
-│  ├─ panels.js                    # 侧栏交互
-│  └─ styles.css                   # 中文界面样式
+│  ├─ panels.js                    # 侧栏交互总编排（切换 / 录制 / 编辑模式 / 九宫格开关）
+│  └─ styles.css                   # 一体导轨侧栏 / 输入法栏 / 编辑弹窗 / 九宫格按钮主题
 └─ utils/emitter.js                # 事件发射器
 
 scripts/
-├─ test-model.mjs
-├─ test-rules.mjs
-├─ test-gyro.mjs
-├─ test-camera.mjs
-├─ test-orientation.mjs
-└─ test-ime.mjs
+├─ test-*.mjs                      # Node 逻辑测试（9 个）
+├─ gen-ime-profiles.mjs            # 生成输入法 profile JSON（npm run gen:profiles）
+├─ gen-t9-dict.mjs                 # 生成九键字库（npm run gen:t9-dict）
+├─ patch-candidates.mjs            # 用字频数据补齐拼音候选表（一次性）
+└─ data/charfreq-ModernMO.txt      # Jun Da 现代汉语字频表副本
+
+tests/e2e/                          # Playwright 浏览器端到端用例
+docs/                               # 计划书（现行 v0.4 + 已归档旧版）
 ```
 
 ## 测试
 
 ```bash
-npm test
+npm test             # Node 逻辑测试：模型 / 配置 / 规则 / 格子编号 / 九键引擎 / 输入法引擎 / 参考系 / 相机
+npm run test:e2e     # Playwright：一体导轨侧栏动画、键位出字、五套输入法、规则导入导出、模拟触摸、编辑模式、九宫格模式、持久化
 ```
 
-该测试覆盖魔方扭转数学、规则引擎、方向判定、相机轨道、键盘层映射和输入法解释逻辑，不依赖浏览器渲染。
+E2E 需要浏览器支持 WebGL（无头模式自动使用 swiftshader 软件渲染）。
 
 ## 已知限制与后续计划
 
 - 当前不读取真实硬件方向 / 陀螺仪；方向模拟只是软件模拟。
-- 当前不是系统级输入法，只是页面内简单虚拟输入法。
-- 当前规则引擎只支持 `turn-sequence`，`state` 状态匹配规则保持未实现，暂不处理。
-- 中文候选目前使用内置轻量拼音表，后续可替换为更完整词库。
-- Canvas 2D 软件渲染兜底作为后续预留项，当前不实现。
-- 九宫格模式功能定位仍不明确，需要后续改进。
+- 当前不是系统级输入法，只是页面内虚拟输入法。
+- 规则引擎只支持 `turn-sequence`；`state` 状态匹配规则保持未实现。
+- 双拼为简版：一次处理一个音节，无整句 / 词组候选；五笔只预留接口（字库接入点见 `src/ime/engines.js` 与 profile JSON）。
+- 拼音候选为单字候选，无词组。
+- 九宫格触屏点按（点格子=按键）留待后续评估，当前只认旋转输入。

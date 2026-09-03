@@ -1,6 +1,13 @@
-// 规则引擎测试：扭转序列立即匹配、最长后缀优先、贴纸映射。
+// 规则引擎测试：扭转序列立即匹配、最长后缀优先、输入法规则表生效。
 import { RuleEngine } from '../src/mapping/ruleEngine.js';
-import { DEFAULT_CONFIG } from '../src/mapping/defaultConfig.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+function assert(condition, label) {
+  if (!condition) throw new Error(`${label} 不通过`);
+  console.log(`${label}：true`);
+}
 
 const engine = new RuleEngine();
 const outputs = [];
@@ -13,14 +20,14 @@ engine.registerRule({ id: 'u', type: 'turn-sequence', when: ['U'], output: 'u' }
 // 输入 R B：R 不单独命中，B 输入后应匹配最长后缀 R B，立即输出 rb。
 engine.onTurn('R', 1);
 engine.onTurn('B', 1);
-console.log('R B 立即输出 rb：', outputs.includes('rb'));
-console.log('R B 不会输出 b：', !outputs.includes('b'));
+assert(outputs.includes('rb'), 'R B 立即输出 rb');
+assert(!outputs.includes('b'), 'R B 不会输出 b');
 
 // 未命中时保留缓冲；后续 U 应只输出 u。
 engine.clearTurns();
 outputs.length = 0;
 engine.onTurn('U', 1);
-console.log('U 立即输出 u：', outputs[0] === 'u');
+assert(outputs[0] === 'u', 'U 立即输出 u');
 
 // 多个连续命中时，应依次输出。
 engine.clearTurns();
@@ -28,25 +35,44 @@ outputs.length = 0;
 engine.onTurn('R', 1);
 engine.onTurn('B', 1);
 engine.onTurn('U', 1);
-console.log('R B U 立即输出 rb、u：', outputs.join(',') === 'rb,u');
+assert(outputs.join(',') === 'rb,u', 'R B U 依次输出 rb、u');
 
-// 九宫格贴纸映射
-engine.registerStickerMap({ id: 'f9', face: 'F', cells: { '0,0': 'Q' } });
-let sticker = engine.triggerSticker('F', { row: 0, col: 0 });
-console.log('贴纸 F(0,0) -> Q：', sticker?.output === 'Q');
+// ---------- 输入法 profile 的规则表（26键拼音） ----------
+const profile = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'configs', 'ime', 'pinyin26.json'), 'utf8'),
+);
+assert(profile.engine === 'pinyin26' && Array.isArray(profile.defaultRules), 'pinyin26 profile 结构完整');
 
-engine.setStickerCell('F', 1, 2, 'X');
-sticker = engine.triggerSticker('F', { row: 1, col: 2 });
-console.log('贴纸 F(1,2) -> X：', sticker?.output === 'X');
+const imeEngine = new RuleEngine();
+const imeOutputs = [];
+imeEngine.events.on('output', (result) => imeOutputs.push(result.output));
+imeEngine.load({ rules: profile.defaultRules });
 
-// 默认配置中的模拟功能规则：M 删除、E 空格、S 补全。
-const defaultEngine = new RuleEngine();
-const defaultOutputs = [];
-defaultEngine.events.on('output', (result) => defaultOutputs.push(result.output));
-defaultEngine.load(DEFAULT_CONFIG);
-defaultEngine.onTurn('M', 1);
-defaultEngine.onTurn('E', 1);
-defaultEngine.onTurn('S', 1);
-console.log('默认规则 M/E/S 输出 ⌫/␣/⇥：', defaultOutputs.join(',') === '⌫,␣,⇥');
+// 打一个字母：a = U L（先顶面后左面，均顺时针）
+imeEngine.onTurn('U', 1);
+imeEngine.onTurn('L', 1);
+assert(imeOutputs.includes('a'), '规则表：U L 输出字母 a');
+
+// 连续打两个字母不互相误伤：a (U L) + y (D R)
+imeEngine.clearTurns();
+imeOutputs.length = 0;
+for (const [face, dir] of [['U', 1], ['L', 1], ['D', 1], ['R', 1]]) imeEngine.onTurn(face, dir);
+assert(imeOutputs.join(',') === 'a,y', '连续两段扭转各自命中、无跨界误匹配');
+
+// 方向参与匹配：U L' 不是 a
+imeEngine.clearTurns();
+imeOutputs.length = 0;
+imeEngine.onTurn('U', 1);
+imeEngine.onTurn('L', -1);
+assert(imeOutputs.includes('b') && !imeOutputs.includes('a'), "U L' 输出 b（方向敏感）");
+
+// 功能键：S → ␣
+imeEngine.clearTurns();
+imeOutputs.length = 0;
+imeEngine.onTurn('S', 1);
+assert(imeOutputs[0] === '␣', 'S 层输出空格');
+
+// 录制语义：扭转 → 记法 token 的往返一致性（录制功能的数据基础）
+assert(imeEngine.listRules().every((rule) => Array.isArray(rule.when)), 'listRules 返回数组形式的 when');
 
 console.log('规则引擎测试通过');

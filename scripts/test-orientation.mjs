@@ -40,13 +40,13 @@ assert(resolved.face === 'M' && resolved.dir === -1, '背面为正面时 M 方�
 
 // 6) 键盘映射整体解析。
 const resolvedMap = resolveKeymap(
-  { s: { face: 'F' }, e: { face: 'U' }, j: { face: 'M' } },
+  { s: { face: 'F' }, r: { face: 'U' }, j: { face: 'M' } },
   'back',
   'up',
 );
 assert(
   resolvedMap.s.face === 'B'
-    && resolvedMap.e.face === 'U'
+    && resolvedMap.r.face === 'U'
     && resolvedMap.j.face === 'M'
     && resolvedMap.j.dir === -1,
   '键盘映射随参考系更新',
