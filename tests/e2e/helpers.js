@@ -30,6 +30,12 @@ export async function exitT9(page) {
   await page.waitForTimeout(700);
 }
 
+// 收起侧栏：让魔方回到视口正中（画布坐标断言依赖此状态）
+export async function collapseSidebar(page) {
+  await page.evaluate(() => document.body.classList.add('sidebar-collapsed'));
+  await page.waitForTimeout(400);
+}
+
 // 按键扭层：'a' 或组合 'Shift+a'（也接受 ['Shift','a'] 数组）
 export async function press(page, combo, wait = 120) {
   const comboStr = Array.isArray(combo) ? combo.join('+') : combo;

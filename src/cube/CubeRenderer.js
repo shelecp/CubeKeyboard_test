@@ -69,13 +69,29 @@ export class CubeRenderer {
     this.cameraRigGroup.add(this.camera);
     this.scene.add(this.cameraRigGroup);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    // 性能关键：
+    // - 不开 preserveDrawingBuffer（每帧强制保留/拷贝帧缓冲，吃显存又拖慢核显）；
+    // - 按需渲染（见 invalidate / _loop），空闲时完全不跑渲染循环，避免持续占用 GPU 导致整机卡顿；
+    // - 设备像素比封顶 1.5，高分屏下显著降低填充率；
+    // - 不指定 high-performance，避免双显卡笔记本被强制切到独显而增加发热。
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.domElement = this.renderer.domElement;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     container.appendChild(this.domElement);
+
+    // 按需渲染状态
+    this._frameRequested = false;
+    this._cameraDirty = true;
+    // 必须在任何 invalidate() 调用之前绑定（_setupControls / _onResize 都会触发 invalidate）
+    this._loop = this._loop.bind(this);
+
+    // 复用的临时向量，避免每帧 new（GC 抖动是"运行很卡"的另一来源）
+    this._tmpFront = new THREE.Vector3();
+    this._tmpUp = new THREE.Vector3();
+    this._tmpQuat = new THREE.Quaternion();
 
     this.cubeGroup = new THREE.Group();
     this.scene.add(this.cubeGroup);
@@ -90,7 +106,13 @@ export class CubeRenderer {
     requestAnimationFrame(() => this._onResize());
     this._updateCamera();
 
-    this._loop = this._loop.bind(this);
+    this.invalidate();
+  }
+
+  // 请求渲染一帧（合并到下一个 rAF）。空闲时不会被调用 → 不占用 GPU。
+  invalidate() {
+    if (this._frameRequested) return;
+    this._frameRequested = true;
     requestAnimationFrame(this._loop);
   }
 
@@ -126,6 +148,7 @@ export class CubeRenderer {
   setAxesVisible(visible) {
     this.axesVisible = Boolean(visible);
     this.axesGroup.visible = this.axesVisible;
+    this.invalidate();
   }
 
   setTurnDuration(milliseconds) {
@@ -145,14 +168,12 @@ export class CubeRenderer {
     // 屏幕朝前的方向 = 相机局部 +Z 变换到世界；
     // 屏幕朝上的方向 = 相机局部 +Y 变换到世界。
     // 这样无论怎么平移，判断只依赖视角，不依赖相机与魔方中心的连线。
-    const front = new THREE.Vector3(0, 0, 1).applyQuaternion(this.cameraRig.rigQuaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cameraRig.rigQuaternion);
+    // 复用临时向量，避免每次调用 new（配合按需渲染，消除 GC 抖动）。
+    const front = this._tmpFront.set(0, 0, 1).applyQuaternion(this.cameraRig.rigQuaternion);
+    const up = this._tmpUp.set(0, 1, 0).applyQuaternion(this.cameraRig.rigQuaternion);
+    const identity = this._tmpQuat.identity();
 
-    return detectOrientationFaces(
-      new THREE.Quaternion(),
-      up,
-      front,
-    );
+    return detectOrientationFaces(identity, up, front);
   }
 
   // 重置为默认视角，并清空平移；供“方向模拟”重新校准屏幕朝向。
@@ -162,7 +183,8 @@ export class CubeRenderer {
     this.cameraRig.distance = 10;
     this.cameraRig.resetPan();
     this._fitToCube();
-    this._updateCamera();
+    this._cameraDirty = true;
+    this.invalidate();
   }
 
   _setupControls() {
@@ -247,6 +269,8 @@ export class CubeRenderer {
           } else {
             this._panBy(dx, dy);
           }
+          this._cameraDirty = true;
+          this.invalidate();
         }
         lastSingle = { x: pointer.x, y: pointer.y, type: pointer.type, button: pointer.button };
       } else if (pointers.size === 2) {
@@ -257,6 +281,8 @@ export class CubeRenderer {
           if (lastPinch.dist > 0 && dist > 0) {
             this.cameraRig.zoomBy(lastPinch.dist / dist);
           }
+          this._cameraDirty = true;
+          this.invalidate();
         }
         lastPinch = { mid, dist };
       }
@@ -302,6 +328,8 @@ export class CubeRenderer {
     dom.addEventListener('wheel', (event) => {
       event.preventDefault();
       this.cameraRig.zoomBy(1 + event.deltaY * 0.001);
+      this._cameraDirty = true;
+      this.invalidate();
     }, { passive: false });
 
     dom.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
@@ -348,6 +376,13 @@ export class CubeRenderer {
     }
     this.meshes.clear();
     this.textOverlays.clear();
+    // 释放旧的高亮网格（含其纹理），避免反复重建泄漏显存
+    if (this.highlightMesh) {
+      this.highlightMesh.parent?.remove(this.highlightMesh);
+      this.highlightMesh.geometry.dispose();
+      this.highlightMesh.material.map?.dispose();
+      this.highlightMesh.material.dispose();
+    }
     this.highlightMesh = null;
     this.hoveredCellId = null;
     this.model = model;
@@ -369,6 +404,8 @@ export class CubeRenderer {
     }
 
     this.sync(model);
+    this._cameraDirty = true;
+    this.invalidate();
   }
 
   _disposeChildren(mesh) {
@@ -408,6 +445,9 @@ export class CubeRenderer {
       canvas.height = 256;
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
+      // 贴纸文字不需要 mipmap：关闭可省约 1/3 显存并减少上传开销
+      texture.generateMipmaps = false;
+      texture.minFilter = THREE.LinearFilter;
       const material = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
@@ -435,15 +475,20 @@ export class CubeRenderer {
     this._drawStickerCanvas(overlay.material.map.image, cubie.colors[materialIndex], content);
     overlay.material.map.needsUpdate = true;
     overlay.visible = true;
+    this.invalidate();
   }
 
   clearStickerText(cellId) {
     const overlay = this.textOverlays.get(cellId);
-    if (overlay) overlay.visible = false;
+    if (overlay) {
+      overlay.visible = false;
+      this.invalidate();
+    }
   }
 
   clearAllStickerTexts() {
     for (const overlay of this.textOverlays.values()) overlay.visible = false;
+    this.invalidate();
   }
 
   _drawStickerCanvas(canvas, colorName, content) {
@@ -510,6 +555,9 @@ export class CubeRenderer {
   _pickAt(event) {
     const ndc = this._ndcFromEvent(event);
     if (!ndc) return null;
+    // 按需渲染下世界矩阵只在 render 时更新；拾取前强制刷新，保证射线命中正确
+    //（否则可能在首帧渲染前就 raycast，用到未更新的矩阵）。
+    this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(ndc, this.camera);
     const hits = this.raycaster.intersectObjects(this.cubeGroup.children, false);
     const hit = hits.find((item) => item.object?.userData?.cubieId);
@@ -550,6 +598,7 @@ export class CubeRenderer {
     }
 
     this.cellHoverHandler?.(pick);
+    this.invalidate();
   }
 
   _createHighlightMesh() {
@@ -580,6 +629,8 @@ export class CubeRenderer {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
     const material = new THREE.MeshBasicMaterial({
       map: texture,
       transparent: true,
@@ -612,6 +663,7 @@ export class CubeRenderer {
       mesh.position.copy(cubie.pos);
       mesh.quaternion.copy(cubie.orient);
     }
+    this.invalidate();
   }
 
   // 播放一次层扭转动画；动画结束后再提交逻辑状态。
@@ -641,6 +693,7 @@ export class CubeRenderer {
         const t = Math.min(1, (now - start) / duration);
         const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         pivot.quaternion.setFromAxisAngle(info.meta.axis, info.angle * eased);
+        this.invalidate();
 
         if (t < 1) {
           requestAnimationFrame(step);
@@ -662,6 +715,7 @@ export class CubeRenderer {
         resolve(true);
       };
 
+      this.invalidate();
       requestAnimationFrame(step);
     });
   }
@@ -673,7 +727,8 @@ export class CubeRenderer {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this._fitToCube();
-    this._updateCamera();
+    this._cameraDirty = true;
+    this.invalidate();
   }
 
   _fitToCube() {
@@ -687,18 +742,24 @@ export class CubeRenderer {
   }
 
   _loop() {
-    requestAnimationFrame(this._loop);
+    this._frameRequested = false;
     try {
-      // 焦点高亮呼吸动画
+      let keepAnimating = false;
+      // 焦点高亮呼吸动画：只要高亮可见就持续自驱动（悬停时）
       if (this.highlightMesh?.visible) {
         this.highlightTime += 0.016;
         const pulse = 0.72 + Math.sin(this.highlightTime * 5) * 0.22;
         this.highlightMesh.material.opacity = pulse;
-        const scale = 1 + Math.sin(this.highlightTime * 5) * 0.02;
-        this.highlightMesh.scale.setScalar(scale);
+        this.highlightMesh.scale.setScalar(1 + Math.sin(this.highlightTime * 5) * 0.02);
+        keepAnimating = true;
       }
-      this._updateCamera();
+      // 相机只在真正移动时重算（含视角朝向检测），空闲帧零开销
+      if (this._cameraDirty) {
+        this._updateCamera();
+        this._cameraDirty = false;
+      }
       this.renderer.render(this.scene, this.camera);
+      if (keepAnimating) this.invalidate();
     } catch (error) {
       this.lastError = error;
       if (!this._errorLogged) {

@@ -85,6 +85,24 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
+  /* 让魔方避开遮挡面板：桌面右移、手机抽屉展开时上移；canvas 平移后
+     getBoundingClientRect 仍准确，所以 raycast 命中不受影响 */
+  transform: translate(var(--cube-shift-x, 0px), var(--cube-shift-y, 0px));
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 桌面（侧栏在左）：展开时把魔方右移，避开左侧面板；九宫格模式侧栏隐藏故不偏移 */
+@media (min-width: 721px) {
+  body:not(.sidebar-collapsed):not(.t9-mode) {
+    --cube-shift-x: 183px;
+  }
+}
+
+/* 手机（抽屉在底）：展开时把魔方上移，避开底部面板 */
+@media (max-width: 720px) {
+  body:not(.sidebar-collapsed):not(.t9-mode) {
+    --cube-shift-y: -14vh;
+  }
 }
 
 #cube-container canvas {
@@ -98,6 +116,7 @@ body {
   left: 50%;
   bottom: 20px;
   transform: translateX(-50%);
+  margin-left: var(--cube-shift-x, 0px);
   background: rgba(14, 17, 24, 0.68);
   border: 1px solid var(--border);
   backdrop-filter: blur(10px);
@@ -1172,6 +1191,7 @@ select:disabled {
 /* ---------- 移动端：底部抽屉 ---------- */
 
 @media (max-width: 720px) {
+  /* 容器改为纵向 flex：导轨(把手)在顶、面板在下可滚，收起时只露 40px 导轨 */
   #sidebar {
     top: auto;
     bottom: 0;
@@ -1179,38 +1199,42 @@ select:disabled {
     right: 0;
     width: auto;
     height: auto;
-    max-height: 46vh;
+    max-height: 56vh;
+    display: flex;
+    flex-direction: column;
   }
 
   body.sidebar-collapsed #sidebar {
     transform: translateY(calc(100% - 40px));
   }
 
-  #sidebar-panel {
-    position: relative;
-    inset: auto;
-    width: auto;
-    max-height: calc(46vh - 40px);
-    border-top: 1px solid var(--border);
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    background: linear-gradient(180deg, rgba(77, 141, 255, 0.04), transparent 160px), rgba(20, 23, 33, 0.92);
-  }
-
-  /* 移动端把手导轨转为顶部横条 */
+  /* 导轨转为顶部横条（DOM 里在面板之后，用 order 提到最上） */
   .sidebar-rail {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: auto;
+    position: static;
+    order: 1;
+    flex: none;
     width: auto;
     height: 40px;
     flex-direction: row;
     justify-content: flex-end;
+    align-items: center;
     padding: 0 12px;
     border-left: none;
     border-bottom: 1px solid var(--border);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow: none;
+  }
+
+  #sidebar-panel {
+    position: static;
+    inset: auto;
+    order: 2;
+    flex: 1 1 auto;
+    width: auto;
+    max-height: none;
+    border-radius: 0;
+    padding-top: 12px;
+    background: rgba(20, 23, 33, 0.94);
   }
 
   #sidebar-toggle {
@@ -1227,22 +1251,41 @@ select:disabled {
     transform: none;
   }
 
+  /* 触屏用不到键盘提示，且窄屏会被裁切 —— 直接隐藏 */
+  #overlay-hint {
+    display: none;
+  }
+
+  /* 输入法栏改为顶部紧凑停靠（位置由 ImeBar._placeInitial 设定） */
   #ime-bar {
-    right: 12px;
-    bottom: 12px;
+    padding: 8px;
+    gap: 6px;
+  }
+
+  #ime-output {
+    min-height: 40px;
+    font-size: 15px;
+  }
+
+  #ime-bar-candidates {
+    min-height: 32px;
+  }
+
+  .candidate {
+    min-width: 38px;
+    padding: 4px 8px;
   }
 
   .cells-save-float {
     right: 150px;
   }
 
-  .subtitle {
-    margin-bottom: 12px;
+  .cell-editor {
+    width: min(268px, calc(100vw - 16px));
   }
 
-  #overlay-hint {
-    bottom: auto;
-    top: 12px;
+  .subtitle {
+    margin-bottom: 12px;
   }
 }
 

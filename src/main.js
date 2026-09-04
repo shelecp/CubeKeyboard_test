@@ -92,7 +92,9 @@ try {
   </div>`;
 }
 
-// 汇报当前渲染方式，并对 WebGL 画面做像素采样诊断，方便定位“不显示”问题。
+// 汇报当前渲染方式（轻量诊断）。
+// 注意：渲染器已关闭 preserveDrawingBuffer（省显存、提性能），因此不再对主画布做像素采样，
+// 只报告上下文与尺寸信息；WebGL 能力检测用的是独立临时画布，不受影响。
 function reportRenderer(cubeKeyboard) {
   const statusEl = document.getElementById('webgl-status');
   const renderer = cubeKeyboard.renderer;
@@ -107,22 +109,14 @@ function reportRenderer(cubeKeyboard) {
       const dom = renderer.domElement || renderer.renderer?.domElement;
       if (!dom) throw new Error('未找到 WebGL 画布元素');
       const canvasSize = `${dom.width}×${dom.height}`;
-      let colorful = null;
-      if (dom.width > 0 && dom.height > 0) {
-        const copy = document.createElement('canvas');
-        copy.width = dom.width;
-        copy.height = dom.height;
-        const copyCtx = copy.getContext('2d');
-        copyCtx.drawImage(dom, 0, 0);
-        colorful = countColorful(copyCtx.getImageData(0, 0, copy.width, copy.height).data, copy.width, copy.height);
-      }
+      const pr = renderer.renderer?.getPixelRatio?.() ?? 1;
 
       const lines = [
-        '已启用 WebGL（Three.js）',
+        '已启用 WebGL（Three.js · 按需渲染）',
         `容器：${containerSize}`,
         `画布：${canvasSize}`,
+        `像素比：${Math.round(pr * 100) / 100}`,
       ];
-      if (colorful !== null) lines.push(`采样彩色像素：${colorful}`);
       if (renderer.lastError) lines.push(`渲染错误：${renderer.lastError.message}`);
       statusEl.innerHTML = lines.join('<br>');
 
@@ -136,21 +130,4 @@ function reportRenderer(cubeKeyboard) {
       statusEl.innerHTML = `渲染诊断失败：${escapeHtml(error.message)}`;
     }
   }, 600);
-}
-
-function countColorful(data, width, height) {
-  let colorful = 0;
-  const step = Math.max(1, Math.floor(Math.min(width, height) / 40));
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      const i = (y * width + x) * 4;
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      if (max - min > 40 && max > 60) colorful += 1;
-    }
-  }
-  return colorful;
 }

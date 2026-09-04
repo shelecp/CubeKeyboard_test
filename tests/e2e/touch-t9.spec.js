@@ -1,6 +1,6 @@
 // E2E：模拟触摸（悬停焦点/点击输出）、编辑模式（弹窗/拖动/浮动保存）、九宫格模式（右上角按钮）。
 import { test, expect } from '@playwright/test';
-import { openFresh, enterT9, exitT9, pressAll, compText, candidates, outputText } from './helpers.js';
+import { openFresh, enterT9, exitT9, collapseSidebar, pressAll, compText, candidates, outputText } from './helpers.js';
 
 // 复原态正面 F1（Q 格）在默认视角下的画布坐标（1440×900，侧栏展开）
 const F1 = { x: 583, y: 307 };
@@ -10,6 +10,7 @@ const BLANK = { x: 1100, y: 830 };
 test.describe('模拟触摸', () => {
   test('悬停出现焦点，移出消失，点击输出格子文字', async ({ page }) => {
     await openFresh(page);
+    await collapseSidebar(page);
     await page.mouse.move(F1.x, F1.y);
     await page.waitForFunction(() => window.CubeKeyboard.renderer.hoveredCellId === 'F1');
     expect(await page.evaluate(() => window.CubeKeyboard.renderer.highlightMesh?.visible)).toBe(true);
@@ -27,6 +28,7 @@ test.describe('编辑模式', () => {
   test('点击格子弹窗、回车暂存、右上角浮动保存出现', async ({ page }) => {
     await openFresh(page);
     await page.locator('#edit-mode').click();
+    await collapseSidebar(page);
     await page.mouse.click(F1.x, F1.y);
     await page.waitForTimeout(300);
 
@@ -50,6 +52,7 @@ test.describe('编辑模式', () => {
   test('多弹窗、点击置顶、拖动、总保存后刷新持久化', async ({ page }) => {
     await openFresh(page);
     await page.locator('#edit-mode').click();
+    await collapseSidebar(page);
     await page.mouse.click(F1.x, F1.y);
     await expect(page.locator('.cell-editor')).toHaveCount(1);
     await page.mouse.click(F2.x, F2.y);
@@ -85,6 +88,7 @@ test.describe('编辑模式', () => {
   test('取消不保存', async ({ page }) => {
     await openFresh(page);
     await page.locator('#edit-mode').click();
+    await collapseSidebar(page);
     await page.mouse.click(F1.x, F1.y);
     await expect(page.locator('.cell-editor')).toHaveCount(1);
     const popup = page.locator('.cell-editor');

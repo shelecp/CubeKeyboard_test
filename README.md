@@ -15,14 +15,34 @@
 
 ## 快速开始
 
+### 开发运行（改代码时用）
+
 ```bash
-npm install
-npm run dev          # 开发模式（热更新）
-npm run build        # 构建单文件 dist/index.html（Three.js 与字库全部内联，离线可用）
-npm run preview      # 预览构建产物
+npm install          # 首次安装依赖（需要 Node.js 18+）
+npm run dev          # 启动开发服务器
 ```
 
-测试：
+启动后终端会打印本地地址，用浏览器打开即可（默认 **http://localhost:5173** ，若被占用会提示新端口）。改代码会热更新。
+
+### 构建产物
+
+```bash
+npm run build        # 生成单文件 dist/index.html
+```
+
+产物是**一个自包含的 `dist/index.html`**：Three.js、样式、九键字库全部内联，无任何外部依赖、无需联网。
+
+### 部署 / 分发（怎么用构建产物）
+
+任选其一：
+
+- **直接双击打开**：把 `dist/index.html` 拷到任意机器，双击用 Chrome/Edge 打开即可运行（纯前端，无需服务器、无需联网）。
+- **本地预览**：`npm run preview`（默认 http://localhost:4173 ）。
+- **静态托管**：把 `dist/` 目录整体上传到任意静态站点即可，例如 GitHub Pages、Cloudflare Pages、Vercel（以 `dist` 为输出目录）、Nginx / 对象存储 / 本地 `npx serve dist`。因为只有一个 HTML 文件，不需要任何后端或路由配置。
+
+> 注意：应用用到 WebGL，需在支持硬件加速的浏览器中打开；`file://` 直接双击即可，个别浏览器若限制本地文件加载可改用 `npm run preview` 或任意静态服务器。
+
+### 测试
 
 ```bash
 npm test             # Node 逻辑测试（不依赖浏览器）
@@ -106,6 +126,16 @@ u=D L   v=D L'  w=D M   x=D M'  y=D R   z=D R'
 - 再点一次按钮退出，恢复原输入法、贴纸文字与侧栏。
 - 实现完全隔离在 `src/t9/`，通过 `import.meta.glob` 懒加载。**删除 `src/t9/` 后按钮自动隐藏，其余功能（含九键拼音输入法）零影响**——这是可随时交给智能体删掉的临时测试功能。
 - 九宫格与九键拼音都用到 `src/ime/t9Engine.js` 引擎；删 `src/t9/` 不影响九键拼音输入法。
+
+## 性能（v0.4.1 优化）
+
+针对"运行一会儿就卡、拖慢整机"的问题，渲染层做了系统性优化：
+
+- **按需渲染**：去掉常驻 `requestAnimationFrame` 循环，改为 `invalidate()` 事件驱动——空闲时**每帧 0 次 GPU 绘制**（实测空闲 3 秒 render=0），只有相机拖动 / 层扭转动画 / 悬停呼吸 / 贴纸变化时才出帧，避免持续占用 GPU 导致核显降频、整机发烫卡顿。
+- **关闭 `preserveDrawingBuffer`**：不再每帧保留/拷贝帧缓冲，显著降低显存占用与合成开销。
+- **设备像素比封顶 1.5**、**不强制独显**（去掉 high-performance，双显卡笔记本走核显更省电）。
+- **消除每帧 GC**：视角检测复用临时向量；贴纸/高亮纹理关闭 mipmap（省约 1/3 显存）。
+- 运行自检面板会显示"已启用 WebGL（Three.js · 按需渲染）"与像素比。
 
 ## 参考系与配色
 
